@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
+import { Repeat2 } from 'lucide-react';
 import { AppendOnlyGrid, Segmented } from '@/components/ImageGrid';
 import ProgressiveImage from '@/components/ProgressiveImage';
 import ImageHistoryPanel from '@/components/ImageHistoryPanel';
@@ -108,6 +109,7 @@ function Viewer({
   onStep,
   onUse,
   onDelete,
+  onRemix,
   label,
 }: {
   image: GeneratedImage;
@@ -115,6 +117,7 @@ function Viewer({
   onStep: (step: number) => void;
   onUse: (image: GeneratedImage) => void;
   onDelete: (id: number) => void;
+  onRemix?: (id: number) => void;
   label: string;
 }) {
   const { data: history } = useQuery({
@@ -239,6 +242,19 @@ function Viewer({
             {label} · {image.width} × {image.height}
           </p>
           <div className="my-4 flex flex-wrap gap-2 text-xs">
+            {onRemix && (
+              <button
+                className="flex items-center gap-1.5 rounded bg-primary px-3 py-2 font-medium text-primary-foreground hover:opacity-90"
+                onClick={() => {
+                  onRemix(image.id);
+                  onClose();
+                }}
+                title="Reopen Edit with the same sources, prompt and settings"
+              >
+                <Repeat2 className="h-3.5 w-3.5" />
+                Remix
+              </button>
+            )}
             <button
               className="rounded border px-3 py-2"
               onClick={() => {
@@ -293,11 +309,14 @@ export default function DescribeResults({
   images,
   onUse,
   onDelete,
+  onRemix,
   modelLabel,
 }: {
   images: GeneratedImage[];
   onUse: (source: SourceImage) => void;
   onDelete: (id: number) => void;
+  /** Reopen Edit with this result's sources, prompt and settings. */
+  onRemix?: (id: number) => void;
   modelLabel: (key: string) => string;
 }) {
   const [density, setDensity] = useState<'S' | 'M' | 'L'>('M');
@@ -392,6 +411,7 @@ export default function DescribeResults({
           }}
           onUse={use}
           onDelete={onDelete}
+          onRemix={onRemix}
         />
       )}
     </div>

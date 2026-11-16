@@ -18,10 +18,11 @@ import {
 } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { editApi, settingsApi, billingApi } from '@/lib/api';
-import { Loader2, Trash2, X } from 'lucide-react';
+import { Loader2, Repeat2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import PaintCanvas, {
   maskFile,
+  maskFromImage,
   type PaintMask,
 } from '@/components/tools/PaintCanvas';
 import BoxCanvas, {
@@ -37,7 +38,8 @@ import JobTabs, { jobs, type EditJob } from '@/components/tools/JobTabs';
 import Notice from '@/components/tools/Notice';
 import ModelPanel from '@/components/tools/ModelPanel';
 import Composer from '@/components/tools/Composer';
-import SourceTray from '@/components/tools/SourceTray';
+import SourceTray, { sourceLabel } from '@/components/tools/SourceTray';
+import type { EditRecipe, EditRecipeSource } from '@/types';
 import { useSearchParams } from 'next/navigation';
 import { imagesApi } from '@/lib/api';
 import ImagePickerModal from '@/components/ImagePickerModal';
@@ -107,6 +109,13 @@ function EditPageInner() {
   const hasInitEditModel = useRef(false);
   const appliedJob = useRef<string | null>(null);
   const changedSettings = useRef(new Set<string>());
+  // Remix: reopen Edit exactly as it was for an earlier result (?remix=<id> or the viewer button).
+  const [remixId, setRemixId] = useState<number | null>(() => Number(params.get('remix')) || null);
+  const [remixSeed, setRemixSeed] = useState<number | null>(null);
+  // The prompt editor only reads its value on mount; bump this to load a remixed prompt.
+  const [promptEditorKey, setPromptEditorKey] = useState(0);
+  const appliedRemix = useRef<number | null>(null);
+  const remixPending = useRef<(EditRecipe & { modelKey: string }) | null>(null);
 
   // Form state
   const [prompt, setPrompt] = useState('');
@@ -294,6 +303,8 @@ function EditPageInner() {
       setEnableWebSearch(saved.enableWebSearch === true);
     }
     // Model changes restore that model's choices. Other jobs keep their defaults.
+    // A pending Remix then applies its saved settings on top.
+    if (remixPending.current?.modelKey === editModel) applyRemixSettings(remixPending.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model]);
 
@@ -344,6 +355,126 @@ function EditPageInner() {
   // Source images state
   const [sources, setSources] = useState<SourceImage[]>([]);
   const [hoverSource, setHoverSource] = useState<SourceImage | null>(null);
+  const { data: remixRecipe } = useQuery({
+    queryKey: ['edit-recipe', remixId],
+    queryFn: () => editApi.getRecipe(remixId!),
+    enabled: !!remixId,
+  });
+
+  function remixSource(recipeId: number, source: EditRecipeSource): SourceImage {
+    const extra = { name: source.name, role: source.role, element: source.element };
+    if (source.type === 'gallery') {
+      const file = (uri?: string | null) => (uri ? imagesApi.getThumbnailUrl(uri.split('/').pop()!) : undefined);
+      const fullUrl = imagesApi.getImageUrl(source.object_key!.split('/').pop()!);
+      return {
+        type: 'gallery', id: source.id, previewUrl: file(source.thumbnail_uri_medium) ?? fullUrl, fullUrl,
+        largeUrl: file(source.thumbnail_uri_large), width: source.width ?? undefined, height: source.height ?? undefined, ...extra,
+      };
+    }
+    if (source.type === 'generated') {
+      const url = editApi.getImageUrl(source.id!);
+      return { type: 'generated', id: source.id, previewUrl: url, fullUrl: url, width: source.width ?? undefined, height: source.height ?? undefined, ...extra };
+    }
+    const url = editApi.getSourceUrl(recipeId, source.index);
+    return { type: 'upload', key: source.key, previewUrl: url, fullUrl: url, ...extra };
+  }
+
+  // Saved prompts name sources by label ("Image 2"); turn those back into source chips.
+  function remixPrompt(recipe: EditRecipe, restored: (SourceImage | null)[]) {
+    const labels = recipe.sources
+      .map((_, index) => ({ index, label: sourceLabel(recipe.edit_model, index) }))
+      .sort((a, b) => b.label.length - a.label.length);
+    let text = recipe.prompt;
+    for (const { index, label } of labels) {
+      const pattern = new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9])`, 'g');
+      text = text.replace(pattern, `\u0000${index}\u0000`);
+    }
+    return text.replace(/\u0000(\d+)\u0000/g, (_, index) => {
+      const source = restored[Number(index)];
+      return source ? `\uFFF0${sourceIdentity(source)}\uFFF1` : '[removed image]';
+    });
+  }
+
+  function applyRemixSettings(recipe: EditRecipe) {
+    remixPending.current = null;
+    const settings = recipe.settings;
+    if (settings.image_size && typeof settings.image_size === 'object') {
+      setUseCustomSize(true);
+      setCustomWidth(settings.image_size.width);
+      setCustomHeight(settings.image_size.height);
+    } else if (typeof settings.image_size === 'string') {
+      setUseCustomSize(false);
+      setImageSize(settings.image_size);
+    }
+    if (settings.resolution) setResolution(settings.resolution);
+    if (settings.aspect_ratio) setAspectRatio(settings.aspect_ratio);
+    if (settings.quality) setQuality(settings.quality);
+    if (settings.safety_tolerance) setSafetyTolerance(settings.safety_tolerance);
+    if (settings.enable_web_search != null) setEnableWebSearch(settings.enable_web_search);
+    if (settings.enable_prompt_expansion != null) setEnablePromptExpansion(settings.enable_prompt_expansion);
+    if (settings.enable_safety_checker != null) setEnableSafetyChecker(settings.enable_safety_checker);
+    if (settings.result_type) setResultType(settings.result_type);
+    if (settings.series_amount) setSeriesAmount(settings.series_amount);
+    const target = catalog?.edit.find((item) => item.key === recipe.edit_model);
+    setNumImages(Math.max(1, Math.min(recipe.num_images, target?.max_num_images || 1)));
+    setNegativePrompt(recipe.negative_prompt);
+    // A new seed by default; the original one is offered next to the Seed field.
+    setSeed('');
+    setRemixSeed(recipe.original_seed ?? null);
+  }
+
+  useEffect(() => {
+    if (!remixRecipe || !catalog || appliedRemix.current === remixRecipe.id) return;
+    const recipe = remixRecipe;
+    appliedRemix.current = recipe.id;
+    hasInitEditModel.current = true;
+    appliedJob.current = params.get('job');
+    const retired = !catalog.edit.some((item) => item.key === recipe.edit_model);
+    const modelKey = retired ? catalog.defaults.edit_model : recipe.edit_model;
+    const restored = recipe.sources.map((source) => (source.available ? remixSource(recipe.id, source) : null));
+    const kept = restored.filter((source): source is SourceImage => !!source);
+    setSources(kept);
+    setJob(recipe.job);
+    if (recipe.job === 'describe') {
+      setDescribePrompt(remixPrompt(recipe, restored));
+      setPromptEditorKey((key) => key + 1);
+    }
+    else setPrompt(recipe.prompt);
+    const firstKey = kept[0] ? `${kept[0].type}-${kept[0].id ?? kept[0].previewUrl}` : '';
+    if (firstKey && recipe.object_boxes) setLayouts({ [firstKey]: recipe.object_boxes as ObjectBox[] });
+    if (firstKey && recipe.precision_area)
+      setRegions({ [firstKey]: { area: recipe.precision_area, box: recipe.precision_box ?? undefined } });
+    if (firstKey && recipe.has_mask)
+      maskFromImage(editApi.getMaskUrl(recipe.id))
+        .then((value) => setMasks({ [firstKey]: value }))
+        .catch(() => toast.error('The painted area could not be restored. Paint it again.'));
+    setNotice(
+      [
+        `Remixing edit #${recipe.id}. Same sources, prompt and settings, with a new seed. Change anything, then press Apply.`,
+        recipe.missing_sources > 0
+          ? recipe.missing_sources === 1
+            ? 'One of the sources is missing. It was deleted from your library.'
+            : `${recipe.missing_sources} sources are missing. They were deleted from your library.`
+          : '',
+        retired ? `${recipe.edit_model} is no longer offered, so the default model is used.` : '',
+      ].filter(Boolean).join(' ')
+    );
+    const pending = { ...recipe, modelKey };
+    if (modelKey === editModel && model) applyRemixSettings(pending);
+    else {
+      remixPending.current = retired ? null : pending;
+      setEditModel(modelKey);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remixRecipe, catalog]);
+
+  const startRemix = (id: number) => {
+    appliedRemix.current = null;
+    setSelectedImageId(null);
+    if (id === remixId) void queryClient.invalidateQueries({ queryKey: ['edit-recipe', id] });
+    setRemixId(id);
+  };
+
   const sentPrompt =
     job === 'describe'
       ? translatePrompt(describePrompt, sources, editModel)
@@ -1403,6 +1534,7 @@ function EditPageInner() {
                   EDIT_MODELS.find((model) => model.value === key)?.label ?? key
                 }
                 onDelete={(id) => deleteMutation.mutate(id)}
+                onRemix={startRemix}
                 onUse={(source) => {
                   if (
                     sources.some(
@@ -1453,6 +1585,7 @@ function EditPageInner() {
             input={
               job === 'describe' ? (
                 <DescribeInput
+                  key={promptEditorKey}
                   sources={sources}
                   value={describePrompt}
                   onChange={setDescribePrompt}
@@ -1803,6 +1936,15 @@ function EditPageInner() {
                       placeholder="Random"
                       className="w-full px-3 py-1.5 border border-border rounded-lg text-sm"
                     />
+                    {remixSeed != null && seed !== String(remixSeed) && (
+                      <button
+                        type="button"
+                        onClick={() => setSeed(String(remixSeed))}
+                        className="mt-1 text-xs text-selection hover:underline"
+                      >
+                        Use the original seed ({remixSeed})
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1899,6 +2041,15 @@ function EditPageInner() {
                 <h3 className="font-semibold">
                   Edited Image #{selectedImage.id}
                 </h3>
+                {selectedImage.status === 'completed' && (
+                  <button
+                    onClick={() => startRemix(selectedImage.id)}
+                    className="ml-auto flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+                  >
+                    <Repeat2 className="h-3.5 w-3.5" />
+                    Remix
+                  </button>
+                )}
                 <button
                   aria-label="Delete edited image"
                   onClick={() => {
