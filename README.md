@@ -2,6 +2,12 @@
 
 Automatically ingest, tag, cluster, and browse design inspiration images using AI. Images flow through a processing pipeline that extracts tags, generates descriptions, creates embeddings for semantic search, and clusters similar images together.
 
+## Try it live
+
+**SightLab is running at [sightlab.org](https://sightlab.org).** You don't need to install anything. Sign up with Google or email and you start with 500 free sparks (1 spark = $0.001) to try tagging, search, image generation and editing. More sparks can be bought from the Billing page.
+
+The rest of this README covers running SightLab yourself.
+
 ## Features
 
 ### Image Processing Pipeline
