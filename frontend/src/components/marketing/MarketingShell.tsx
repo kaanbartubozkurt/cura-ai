@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import SightLabLogo from '@/components/SightLabLogo';
+import { DISCORD_INVITE_URL } from '@/lib/links';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function MarketingShell({ children }: { children: React.ReactNode }) {
@@ -51,10 +52,11 @@ export default function MarketingShell({ children }: { children: React.ReactNode
             <SightLabLogo size="sm" />
             <span>© {new Date().getFullYear()} SightLab</span>
           </div>
-          <nav className="flex items-center gap-6">
+          <nav className="flex flex-wrap items-center justify-center gap-6">
             <Link href="/pricing" className="hover:text-foreground transition-colors">Pricing</Link>
             <Link href="/terms" className="hover:text-foreground transition-colors">Terms</Link>
             <Link href="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+            <a href={DISCORD_INVITE_URL} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">Discord</a>
             <a href="mailto:stuart.leal23@gmail.com" className="hover:text-foreground transition-colors">Contact</a>
           </nav>
         </div>

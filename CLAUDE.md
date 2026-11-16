@@ -369,6 +369,7 @@ npm run lint         # ESLint
 - `APIKey` — Encrypted API key storage with validation status
 
 **Frontend structure** (`frontend/src/`):
+- Shared community links: `lib/links.ts` defines `DISCORD_INVITE_URL`, used by Header, the Account hub and the public footer.
 - Pages: Home (public marketing page), Login, Pricing, Terms, Privacy, Library (`/images`, all images; `/images/all` and `/images/folder/[id]`), Folders, Clusters + Cluster Detail, Upload, Search, My models (`/models`, plus evaluate and evaluation detail), Create (`/generate`), Edit (`/edit`, four jobs), Vision, Jobs, Billing, Notifications, Settings, Admin, Debug. Phone hubs: Collection, Studio, Account (`MobileHub`)
 - Tools: Create, Edit and Vision share the Stage layout in `components/tools/` (Stage, JobTabs, SourceTray, Composer, ModelPanel, PaintCanvas, BoxCanvas, SubjectStage, Notice). Image history shows in `ImageHistoryPanel` ("How it was made")
 - Notifications: `contexts/NotificationContext.tsx` holds per-user notification preferences.
