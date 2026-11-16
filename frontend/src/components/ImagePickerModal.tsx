@@ -7,7 +7,7 @@ import { useImagePixels } from '@/hooks/useImagePixels';
 
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { imagesApi, foldersApi, clustersApi, generationApi } from '@/lib/api';
+import { imagesApi, foldersApi, clustersApi } from '@/lib/api';
 import { X, Loader2, ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -78,7 +78,6 @@ export default function ImagePickerModal({
   const [search, setSearch] = useState('');
   const [folderPage, setFolderPage] = useState(0);
   const [clusterPage, setClusterPage] = useState(0);
-  const [tab, setTab] = useState<'gallery' | 'generated'>('gallery');
 
   // Track selected items with their preview URLs
   const [selected, setSelected] = useState<PickedImage[]>([]);
@@ -122,7 +121,7 @@ export default function ImagePickerModal({
         limit,
         min_status: 'ingested',
       }),
-    enabled: open && tab === 'gallery' && browseFolderId !== null,
+    enabled: open && browseFolderId !== null,
   });
 
   const { data: clusterDetail, isLoading: clusterImagesLoading } = useQuery({
@@ -132,7 +131,7 @@ export default function ImagePickerModal({
         skip: page * limit,
         limit: limit + 1,
       }),
-    enabled: open && tab === 'gallery' && browseClusterId !== null,
+    enabled: open && browseClusterId !== null,
   });
 
   const { data: libraryData, isLoading: libraryLoading } = useQuery({
@@ -146,7 +145,6 @@ export default function ImagePickerModal({
       }),
     enabled:
       open &&
-      tab === 'gallery' &&
       browseFolderId === null &&
       browseClusterId === null,
   });
@@ -156,18 +154,6 @@ export default function ImagePickerModal({
       setPreview(null);
     }
   }, [open]);
-
-  // Generated tab
-  const { data: generatedData, isLoading: generatedLoading } = useQuery({
-    queryKey: ['picker-generated', page],
-    queryFn: () =>
-      generationApi.listImages({
-        skip: page * limit,
-        limit,
-        status: 'completed',
-      }),
-    enabled: open && tab === 'generated',
-  });
 
   useEffect(() => {
     if (!open) return;
@@ -265,11 +251,6 @@ export default function ImagePickerModal({
   const galleryThumbUrl = (uri: string | null | undefined) => {
     if (!uri) return '';
     return imagesApi.getThumbnailUrl(uri.split('/').pop() || '');
-  };
-
-  const generatedThumbUrl = (uri: string | null | undefined) => {
-    if (!uri) return '';
-    return generationApi.getThumbnailUrl(uri.split('/').pop() || '');
   };
 
   const renderTiles = (items: PickerItem[]) => (
@@ -454,14 +435,12 @@ export default function ImagePickerModal({
                   key={item.label}
                   className={cn(
                     'shrink-0 rounded px-3 py-2 text-left text-xs',
-                    tab === 'gallery' &&
-                      !isInsideCollection &&
+                    !isInsideCollection &&
                       source === item.value &&
                       'bg-accent'
                   )}
                   onClick={() => {
                     goBack();
-                    setTab('gallery');
                     setSource(item.value);
                   }}
                 >
@@ -482,7 +461,6 @@ export default function ImagePickerModal({
                       browseFolderId === folder.id && 'bg-accent'
                     )}
                     onClick={() => {
-                      setTab('gallery');
                       setBrowseClusterId(null);
                       openFolder(folder.id, folder.name);
                     }}
@@ -522,7 +500,6 @@ export default function ImagePickerModal({
                       browseClusterId === cluster.id && 'bg-accent'
                     )}
                     onClick={() => {
-                      setTab('gallery');
                       setBrowseFolderId(null);
                       openCluster(
                         cluster.id,
@@ -556,15 +533,6 @@ export default function ImagePickerModal({
                   )}
                 </div>
               )}
-              <button
-                className="shrink-0 rounded px-3 py-2 text-left text-xs"
-                onClick={() => {
-                  goBack();
-                  setTab('generated');
-                }}
-              >
-                Generation history
-              </button>
             </nav>
             <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
               <input
@@ -577,44 +545,10 @@ export default function ImagePickerModal({
               <p className="mb-3 text-xs text-muted-foreground">
                 Search filters the loaded page.
               </p>
-              {(libraryLoading && !isInsideCollection && tab === 'gallery') ||
+              {(libraryLoading && !isInsideCollection) ||
               (folderImagesLoading && browseFolderId != null) ||
-              (clusterImagesLoading && browseClusterId != null) ||
-              (generatedLoading && tab === 'generated') ? (
+              (clusterImagesLoading && browseClusterId != null) ? (
                 <Loader2 className="mx-auto h-6 w-6 animate-spin" />
-              ) : tab === 'generated' ? (
-                <>
-                  {renderTiles(
-                    (generatedData?.items ?? []).map((img) => ({
-                      id: img.id,
-                      type: 'generated' as const,
-                      thumbnail: generatedThumbUrl(
-                        img.thumbnail_uri_medium || img.thumbnail_uri_small
-                      ),
-                      small: generatedThumbUrl(img.thumbnail_uri_small),
-                      medium: generatedThumbUrl(img.thumbnail_uri_medium),
-                      full: generationApi.getImageUrl(img.id),
-                      width: img.width ?? undefined,
-                      height: img.height ?? undefined,
-                      search: img.prompt,
-                    }))
-                  )}
-                  <div className="mt-4 flex justify-center gap-4 text-xs">
-                    <button disabled={!page} onClick={() => setPage(page - 1)}>
-                      Previous
-                    </button>
-                    <span>Page {page + 1}</span>
-                    <button
-                      disabled={
-                        !generatedData ||
-                        (page + 1) * limit >= generatedData.total
-                      }
-                      onClick={() => setPage(page + 1)}
-                    >
-                      Next
-                    </button>
-                  </div>
-                </>
               ) : browseFolderId != null ? (
                 renderImageGrid(
                   folderImages?.items ?? [],
