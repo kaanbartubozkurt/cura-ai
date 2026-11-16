@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/react';
+import { sanitizeBreadcrumb, sanitizeEvent, sanitizeSpan } from './sentrySanitizers';
 
 let initialized = false;
 
@@ -20,6 +21,9 @@ export async function initSentry(): Promise<void> {
     Sentry.init({
       dsn,
       environment: envLabel,
+      beforeSendSpan: span => sanitizeSpan(span, process.env.NEXT_PUBLIC_API_URL, window.location.origin),
+      beforeSend: event => sanitizeEvent(event),
+      beforeBreadcrumb: breadcrumb => sanitizeBreadcrumb(breadcrumb),
       integrations: [
         Sentry.browserTracingIntegration({
           enableLongAnimationFrame: true,
