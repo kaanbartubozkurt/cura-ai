@@ -21,10 +21,15 @@ function imageKey(src: string) {
   return url.toString();
 }
 
-function ImageContent({ src, initialSource, loading, ...props }: ImgHTMLAttributes<HTMLImageElement> & { src: string; initialSource: string }) {
+export function resolveLibraryImageUrl(src: string) {
+  return resolveImageUrl(imageKey(src));
+}
+
+function ImageContent({ src, initialSource, resolvedSource, loading, ...props }: ImgHTMLAttributes<HTMLImageElement> & { src: string; initialSource: string; resolvedSource?: string }) {
   const host = useRef<HTMLImageElement>(null);
   const [visible, setVisible] = useState(loading !== 'lazy');
   const [url, setUrl] = useState<string | undefined>(() => {
+    if (resolvedSource) return resolvedSource;
     const candidate = new URL(initialSource, typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
     const expiry = candidate.searchParams.get('se');
     return candidate.hostname.endsWith('.blob.core.windows.net') && expiry && Date.parse(expiry) > Date.now() + 60_000
@@ -94,7 +99,7 @@ function ImageContent({ src, initialSource, loading, ...props }: ImgHTMLAttribut
   );
 }
 
-export default function LibraryImage(props: ImgHTMLAttributes<HTMLImageElement>) {
+export default function LibraryImage(props: ImgHTMLAttributes<HTMLImageElement> & { resolvedSource?: string }) {
   if (!props.src) return null;
   const key = imageKey(props.src);
   return <ImageContent {...props} src={key} initialSource={props.src} key={key} />;

@@ -339,6 +339,8 @@ export interface GeneratedImage {
   mime_type: string | null;
   thumbnail_uri_small: string | null;
   thumbnail_uri_medium: string | null;
+  library_thumbnail_uri_medium: string | null;
+  library_thumbnail_uri_large: string | null;
   job_id: number | null;
   cost_sparks: number | null;
   created_at: string;
