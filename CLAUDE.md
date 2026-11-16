@@ -395,6 +395,7 @@ npm run lint         # ESLint
 **Sentry error tracking:** Sentry DSN is stored in the database via the `APIKey` model (provider=`sentry`), configured through the admin panel under Platform API Keys. Not an env var — managed entirely via the UI.
 - **Backend:** `sentry-sdk[fastapi,celery]` initialized on startup in `main.py` (`_init_sentry()`) and in each Celery worker via `worker_ready` signal. Reads DSN from DB once at startup — restart required after DSN change.
 - **Frontend:** `@sentry/react` initialized lazily on mount (`lib/sentry.ts`). Fetches DSN from public endpoint `GET /api/settings/sentry-dsn` (no auth required). Error boundaries (`app/error.tsx`, `app/global-error.tsx`) report caught errors to Sentry.
+- **URL hygiene:** Sentry hooks scrub URL queries and fragments from spans, requests, and breadcrumbs; frontend `http.client` spans use API route templates for grouping.
 - **Dashboard:** [sentry.io](https://sentry.io) — Issues, Performance, and Alerts dashboards. Events are tagged with `environment` (local/dev/prod) and frontend events include `session_id`.
 - **Monitors and alerts** (org `personal-1hi`, project `sightlab-local`, which receives all environments; configured 2026-11-16 in the Sentry UI, not in code). Notifications go by email to the owner; Sentry's Discord integration needs the paid Team plan, so Discord alerts come from our own load-time alerts instead (`docs/load-time-alerts.md`).
   - `Slow API on DEV: server p95 over 1s` — p95 of `http.server` spans, 10 min (medium above 500 ms)
