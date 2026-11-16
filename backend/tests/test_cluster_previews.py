@@ -65,7 +65,7 @@ def test_cluster_list_pages_after_filtering_and_sorts_pins_first(monkeypatch):
                        updated_at=datetime(2026, 10, 31))
 
     service = Mock()
-    service.get_latest_clusters.return_value = [
+    service.get_clusters.return_value = [
         cluster(1, 100, "Zebra"), cluster(2, 3, "Pinned", pinned=True),
         cluster(3, 20, "Apple"), cluster(4, 9, "Unclustered Images"),
         cluster(5, 200, "Archived", archived=True),

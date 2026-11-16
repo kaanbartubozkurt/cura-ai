@@ -29,7 +29,7 @@ from app.services.billing_service import (
     ZeroCostEstimateError,
     finalize_job_billing,
 )
-from app.services.cluster_service import get_cluster_service
+from app.services.cluster_service import SCOPED_RUN_PREFIX, get_cluster_service
 from app.services.clustering import get_clustering_service
 from app.services.image_service import get_image_service
 from app.services.log_service import write_log
@@ -850,9 +850,22 @@ def tag_and_describe_image(
 
 
 @celery_app.task(bind=True)
-def cluster_all_images(self, user_id: int, job_id: int | None = None, trace_id: str | None = None, session_id: str | None = None) -> dict:
+def cluster_all_images(
+    self,
+    user_id: int,
+    job_id: int | None = None,
+    trace_id: str | None = None,
+    session_id: str | None = None,
+    image_ids: list[int] | None = None,
+    params: dict | None = None,
+) -> dict:
     """
-    Cluster all embedded images.
+    Cluster embedded images.
+
+    Without ``image_ids`` the whole library is clustered and the previous
+    whole-library run is replaced. With ``image_ids`` (a folder or a selection)
+    only those images are clustered and the new clusters are added next to the
+    existing ones. ``params`` overrides the saved clustering config for this run.
 
     Pipeline stage: 6
     """
@@ -874,8 +887,9 @@ def cluster_all_images(self, user_id: int, job_id: int | None = None, trace_id: 
         cluster_service = get_cluster_service(db, user_id)
         clustering_service = get_clustering_service()
 
-        # Get all embedded images
-        images = image_service.get_images_for_clustering()
+        scoped = image_ids is not None
+        # Get embedded images (optionally limited to the requested scope)
+        images = image_service.get_images_for_clustering(image_ids=image_ids)
 
         if len(images) < 2:
             logger.warning("Not enough images for clustering")
@@ -900,16 +914,22 @@ def cluster_all_images(self, user_id: int, job_id: int | None = None, trace_id: 
         # Read clustering config from DB
         settings_service = get_settings_service(db, user_id)
         clustering_config = settings_service.get_clustering_config()
+        if params:
+            clustering_config = {**clustering_config, **params}
 
         # Run clustering
         result = clustering_service.cluster(embeddings_array, params=clustering_config)
 
-        # Delete old clusters (keep only latest run)
-        cluster_service.delete_old_clusters()
+        if scoped:
+            # Folder/selection runs add clusters; nothing existing is removed.
+            result.run_id = f"{SCOPED_RUN_PREFIX}{result.run_id}"
+        else:
+            # A whole-library run replaces the previous whole-library run only.
+            cluster_service.delete_old_clusters(library_only=True)
 
         # Create new clusters
         clusters = cluster_service.create_clusters_from_result(
-            result, image_ids, embeddings_array
+            result, image_ids, embeddings_array, include_noise=not scoped
         )
 
         # Generate cover composites for each cluster
@@ -930,9 +950,10 @@ def cluster_all_images(self, user_id: int, job_id: int | None = None, trace_id: 
                 job.status = JobStatus.COMPLETED
                 job.completed_at = datetime.utcnow()
                 job.result = {
-                    "n_clusters": result.n_clusters,
+                    "n_clusters": len(clusters),
                     "n_images": len(image_ids),
                     "run_id": result.run_id,
+                    "scoped": scoped,
                 }
                 db.commit()
 

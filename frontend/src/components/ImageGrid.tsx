@@ -1,7 +1,6 @@
 'use client';
 
 import { useFirstImagesTiming } from '@/lib/loadTimings';
-import JobChooser from '@/components/tools/JobChooser';
 
 import { useMobileSheet } from '@/hooks/useMobileSheet';
 import LibraryThumbnail from '@/components/LibraryThumbnail';
@@ -11,12 +10,10 @@ import { Suspense, useState, useEffect, useMemo, useRef, type ReactNode } from '
 import { useDeletingImages } from '@/lib/deletingImages';
 import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
-import { Check, FileText, FolderMinus, FolderPlus, Loader2, PanelRightOpen, RefreshCw, Trash2, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { CheckSquare, FileText, FolderMinus, FolderPlus, LayoutGrid, Loader2, MinusCircle, PanelRightOpen, Trash2, X } from 'lucide-react';
 import { imagesApi, jobsApi } from '@/lib/api';
 import ImageDrawer from '@/components/ImageDrawer';
-import Inspector, { type InspectorTool } from '@/components/Inspector';
-import DescribeAllDialog from '@/components/DescribeAllDialog';
+import Inspector, { type ImageAction, type InspectorTool } from '@/components/Inspector';
 import { cn } from '@/lib/utils';
 import type { Image, ImageListResponse } from '@/types';
 
@@ -112,9 +109,7 @@ function Tile({
   selecting,
   onOpen,
   onToggle,
-  order,
 }: {
-  order: number;
   image: Image;
   selected: boolean;
   selecting: boolean;
@@ -147,6 +142,7 @@ function Tile({
     >
       <button
         type="button"
+        // In select mode a click anywhere on the image toggles it; Cmd/Ctrl/Shift-click enters select mode.
         onClick={(e) => (selecting || e.metaKey || e.ctrlKey || e.shiftKey ? onToggle() : onOpen())}
         className="block h-full w-full"
         aria-label={`${image.original_filename || `Image ${image.id}`}${selected ? ', selected' : ''}`}
@@ -171,21 +167,6 @@ function Tile({
             No preview
           </div>
         )}
-      </button>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-label={selected ? 'Deselect' : 'Select'}
-        aria-pressed={selected}
-        className={cn(
-          'tile-select absolute left-2 top-2 grid h-[22px] w-[22px] place-items-center rounded-full border-[1.5px] text-white transition-opacity',
-          selected ? 'border-selection bg-selection opacity-100' : 'border-white/95 bg-black/20',
-          !selected &&
-            (selecting ? 'opacity-100' : 'opacity-0 focus-visible:opacity-100 group-hover:opacity-100')
-        )}
-      >
-        <span className="md:hidden">{selected ? order : ''}</span>
-        <Check className={cn('hidden md:block h-3 w-3', selected ? 'opacity-100' : 'opacity-0')} strokeWidth={3} />
       </button>
       {(image.source === 'generated' || image.source === 'edited') && (
         <span className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/45 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-white backdrop-blur">
@@ -341,9 +322,13 @@ function ImageGridContent({
       router.replace(stage);
       return;
     }
-    setTool(entryTool === 'Train model' ? 'Train model' : null);
+    // Training moved out of the library; old links land on Models.
+    if (entryTool === 'Train model') {
+      router.replace('/models');
+      return;
+    }
+    setTool(null);
     setToolImages(null);
-    if (entryTool === 'Train model') setMobileInspector(true);
   }, [entryTool, router]);
 
   const changeInspectorHidden = (hidden: boolean) => {
@@ -368,12 +353,11 @@ function ImageGridContent({
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [density, setDensity] = useState<Density>('M');
-  const [mobileMenu, setMobileMenu] = useState<'jobs' | 'more' | 'actions' | null>(null);
+  const [mobileMenu, setMobileMenu] = useState<'more' | 'actions' | null>(null);
   const sheetRef = useMobileSheet(!!mobileMenu, () => setMobileMenu(null));
   const inspectorRef = useMobileSheet(!wide && (mobileInspector || !!tool), () => { setMobileInspector(false); setTool(null); });
   const gesture = useRef<{ x: number; y: number; timer?: ReturnType<typeof setTimeout>; sweeping: boolean; suppress: boolean }>({ x: 0, y: 0, sweeping: false, suppress: false });
   useEffect(() => () => clearTimeout(gesture.current.timer), []);
-  const [showDescribeAll, setShowDescribeAll] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -471,13 +455,25 @@ function ImageGridContent({
     setToolImages(null);
   };
 
-  const toggle = (id: number) =>
+  const toggle = (id: number) => {
+    setSelectMode(true);
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+  };
+  const selectAllLoaded = () => {
+    setSelectMode(true);
+    setSelectedIds(new Set(images.map((i) => i.id)));
+  };
+  const selectStatuses = (statuses: string[]) => {
+    const ids = images.filter((i) => statuses.includes(i.status)).map((i) => i.id);
+    if (!ids.length) return;
+    setSelectMode(true);
+    setSelectedIds(new Set(ids));
+  };
 
   const allLoadedSelected = images.length > 0 && images.every((img) => selectedIds.has(img.id));
   const selecting = selectMode || selectedIds.size > 0;
@@ -497,8 +493,8 @@ function ImageGridContent({
     return () => document.body.classList.remove('mobile-library-selecting');
   }, [selecting]);
 
-  const navigateTool = (next: InspectorTool | null, ids = toolImages ? toolImages.map(image => image.id) : Array.from(selectedIds)) => {
-    const stage = next === 'Create' ? '/generate' : next === 'Edit' ? '/edit' : next === 'Ask Vision' ? '/vision' : null;
+  const navigateTool = (next: ImageAction | null, ids = toolImages ? toolImages.map(image => image.id) : Array.from(selectedIds)) => {
+    const stage = next === 'Edit' ? '/edit' : next === 'Ask Vision' ? '/vision' : null;
     if (!stage) return false;
     const params = new URLSearchParams();
     if (next === 'Ask Vision') params.set('mode', 'custom');
@@ -509,7 +505,6 @@ function ImageGridContent({
 
   const mobileTool = (next: InspectorTool) => {
     setMobileMenu(null);
-    if (navigateTool(next)) return;
     setTool(next);
     setMobileInspector(true);
   };
@@ -564,31 +559,33 @@ function ImageGridContent({
 
 
         <div className="library-filters flex flex-wrap items-center gap-2">
-          <button className="hidden rounded-md border border-border px-3 text-sm" aria-pressed={selectMode} onClick={() => { setSelectMode(!selectMode); setSelectedIds(new Set()); }}>{selectMode ? 'Done' : 'Select'}</button>
           <button className="md:hidden min-h-10 rounded-full border border-border px-4" onClick={() => setDensity(density === 'L' ? 'M' : density === 'M' ? 'S' : 'L')}>Size · {({ S: 5, M: 3, L: 2 })[density]}</button>
           <div className={showSourceFilter ? '' : 'md:hidden'}>
             <Segmented label="Source" options={SOURCE_FILTERS} value={source} onChange={changeSource} />
           </div>
           <div className="ml-auto hidden md:flex items-center gap-1.5">
-            {folderId && (
-              <button
-                onClick={() => setShowDescribeAll(true)}
-                disabled={hasBatchRunning}
-                title={
-                  hasBatchRunning
-                    ? 'A describe job is already running'
-                    : 'Describe every image in this folder'
-                }
-                className="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <FileText className="h-3.5 w-3.5" />
-                Describe all
-              </button>
+            {selecting && (
+              <span className="px-1 text-[12.5px] font-medium tabular-nums text-selection">{selectedIds.size} selected</span>
             )}
+            <button
+              type="button"
+              aria-pressed={selecting}
+              onClick={() => (selecting ? clearSelection() : setSelectMode(true))}
+              title={selecting ? 'Leave select mode (Esc)' : 'Select images (or Cmd/Shift-click an image)'}
+              className={cn(
+                'flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12.5px] font-medium transition-colors',
+                selecting
+                  ? 'border-selection/40 bg-selection-soft text-selection'
+                  : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'
+              )}
+            >
+              {selecting ? <X className="h-3.5 w-3.5" /> : <CheckSquare className="h-3.5 w-3.5" />}
+              {selecting ? 'Done' : 'Select'}
+            </button>
             {images.length > 0 && (
               <button
                 onClick={() =>
-                  allLoadedSelected ? clearSelection() : setSelectedIds(new Set(images.map((i) => i.id)))
+                  allLoadedSelected ? setSelectedIds(new Set()) : selectAllLoaded()
                 }
                 className="h-7 rounded-md px-2.5 text-[12.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
               >
@@ -635,7 +632,6 @@ function ImageGridContent({
                 <Tile
                   key={image.id}
                   image={image}
-                  order={Array.from(selectedIds).indexOf(image.id) + 1}
                   selected={selectedIds.has(image.id)}
                   selecting={selecting}
                   onOpen={() => setOpenImage(image)}
@@ -652,10 +648,10 @@ function ImageGridContent({
         </div>
         {selecting && (
           <div className="mobile-selection-bar md:hidden" role="toolbar" aria-label="Selection actions">
-            <button onClick={() => setMobileMenu('jobs')}>Edit</button>
-            <button onClick={() => mobileTool('Ask Vision')}>Ask</button>
+            <button disabled={!selectedIds.size || hasBatchRunning} onClick={() => mobileTool('Describe')}>Describe</button>
+            <button disabled={selectedIds.size < 2} onClick={() => mobileTool('Cluster')}>Cluster</button>
             <button disabled={!selectedIds.size} onClick={() => mobileTool('Add to folder')}>Folder</button>
-            <button disabled={!selectedIds.size} onClick={() => mobileTool('Train model')}>Train</button>
+            <button disabled={!selectedIds.size} className="text-danger" onClick={() => mobileTool('Delete')}>Delete</button>
             <button onClick={() => setMobileMenu('more')}>More</button>
           </div>
         )}
@@ -663,17 +659,16 @@ function ImageGridContent({
           <div className="md:hidden fixed inset-0 z-[60] bg-black/50" onClick={() => setMobileMenu(null)}>
             <section ref={sheetRef} role="dialog" aria-modal="true" aria-label="Library actions" className="mobile-sheet absolute inset-x-0 bottom-0 max-h-[85dvh] overflow-y-auto rounded-t-2xl bg-background p-4 space-y-3" onClick={e => e.stopPropagation()}>
               <button className="min-h-10" onClick={() => setMobileMenu(null)}>Close</button>
-              {mobileMenu === 'jobs' ? <>
-                <JobChooser onChange={job => router.push(`/edit?job=${job}&sources=${Array.from(selectedIds).join(',')}`)} />
-              </> : mobileMenu === 'actions' ? <>{headerActions}{inspectorOverview}</> : <>
-                <button className="block min-h-12" onClick={() => setSelectedIds(previous => new Set([...Array.from(previous), ...images.map(image => image.id)]))}>Select all loaded</button>
-                {(['Describe', 'Recluster library', 'Remove from folder', 'Delete'] as InspectorTool[]).filter(next => next !== 'Remove from folder' || folderId).map(next => <button key={next} className="block min-h-12" disabled={!selectedIds.size} onClick={() => mobileTool(next)}>{next}</button>)}
+              {mobileMenu === 'actions' ? <>{headerActions}{inspectorOverview}</> : <>
+                <button className="block min-h-12" onClick={selectAllLoaded}>Select all loaded</button>
+                {folderId && <button className="block min-h-12" disabled={!selectedIds.size} onClick={() => mobileTool('Remove from folder')}>Remove from this folder</button>}
+                {clusterId && <button className="block min-h-12" disabled={!selectedIds.size} onClick={() => mobileTool('Exclude from cluster')}>Exclude from cluster</button>}
               </>}
             </section>
           </div>
         )}
         {/* Compact fallback when the inspector is hidden. */}
-        {selecting && !inspectorVisible && (
+        {selectedIds.size > 0 && !inspectorVisible && (
           <div
             role="toolbar"
             aria-label="Selection actions"
@@ -687,13 +682,15 @@ function ImageGridContent({
             <button
               onClick={() => setTool('Describe')}
               disabled={hasBatchRunning}
-              title={
-                hasBatchRunning ? 'A describe job is already running' : 'Tag, describe and embed these images'
-              }
+              title={hasBatchRunning ? 'A describe job is already running' : 'Tag, describe and embed these images'}
               className={dockButton}
             >
-              <RefreshCw className="h-4 w-4" />
+              <FileText className="h-4 w-4" />
               Describe
+            </button>
+            <button onClick={() => setTool('Cluster')} disabled={selectedIds.size < 2} className={dockButton}>
+              <LayoutGrid className="h-4 w-4" />
+              Cluster
             </button>
             <button onClick={() => setTool('Add to folder')} className={dockButton}>
               <FolderPlus className="h-4 w-4" />
@@ -705,38 +702,18 @@ function ImageGridContent({
                 Remove from folder
               </button>
             )}
-            <button
-              className={dockButton}
-              onClick={() => {
-                setToolImages(Array.from(selectedIds).map(id => images.find(image => image.id === id)).filter((image): image is Image => !!image));
-                setMobileInspector(true);
-              }}
-            >
-              More tools
-            </button>
+            {clusterId && (
+              <button onClick={() => setTool('Exclude from cluster')} className={dockButton}>
+                <MinusCircle className="h-4 w-4" />
+                Exclude
+              </button>
+            )}
             <span className="mx-1 h-5 w-px bg-primary-foreground/20" />
             <button onClick={() => setTool('Delete')} className={dockButton}>
               <Trash2 className="h-4 w-4" />
               Delete
             </button>
           </div>
-        )}
-
-        {showDescribeAll && folderId && (
-          <DescribeAllDialog
-            folderId={folderId}
-            imageCount={total}
-            onClose={() => setShowDescribeAll(false)}
-            onStarted={(jobId, count) => {
-              setShowDescribeAll(false);
-              toast.success(`Describing ${count} images`, {
-                description: `Job #${jobId}`,
-                action: { label: 'View Jobs', onClick: () => router.push('/jobs') },
-              });
-              queryClient.invalidateQueries({ queryKey: ['jobs'] });
-              queryClient.invalidateQueries({ queryKey: [queryKeyPrefix] });
-            }}
-          />
         )}
 
         {openImage && (
@@ -746,12 +723,11 @@ function ImageGridContent({
             images={images}
             onNavigate={setOpenImage}
             onTool={(next, image) => {
-              if (next === 'Edit') {
-                if (window.innerWidth < 768) { setSelectedIds(new Set([image.id])); setSelectMode(true); setOpenImage(null); setMobileMenu('jobs'); }
-                else navigateTool(next, [image.id]);
+              if (next === 'Edit' || next === 'Ask Vision') {
+                navigateTool(next, [image.id]);
                 return;
               }
-              if (navigateTool(next, [image.id])) return;
+              setSelectMode(true);
               setSelectedIds(new Set([image.id]));
               setToolImages([image]);
               setTool(next);
@@ -824,7 +800,6 @@ function ImageGridContent({
               images={toolImages ?? Array.from(selectedIds).map(id => images.find(image => image.id === id)).filter((image): image is Image => !!image)}
               tool={tool}
               onTool={(next) => {
-                if (navigateTool(next)) return;
                 setTool(next);
                 if (!next) {
                   setToolImages(null);
@@ -840,6 +815,14 @@ function ImageGridContent({
               folderId={folderId}
               clusterId={clusterId}
               overview={inspectorOverview}
+              onSelectIds={(ids) => {
+                setToolImages(null);
+                setSelectMode(true);
+                setSelectedIds(new Set(ids));
+              }}
+              onSelectStatus={selectStatuses}
+              onOpenImage={setOpenImage}
+              shortcutsEnabled={!openImage}
               hasBatchRunning={hasBatchRunning}
               onDispatched={() => {
                 setMobileInspector(false);

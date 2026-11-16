@@ -40,6 +40,8 @@ import type {
   MetricsResponse,
   ModelBulkUpdateRequest,
   PipelineStats,
+  ScopeStats,
+  ClusterRunParams,
   PlatformUsageSummary,
   ProcessingCostResponse,
   PromptPreset,
@@ -442,6 +444,12 @@ export const imagesApi = {
     return data;
   },
 
+  /** Inspector stats scoped to the library, one folder or one cluster. */
+  getScopeStats: async (scope: { folder_id?: number; cluster_id?: number } = {}): Promise<ScopeStats> => {
+    const { data } = await api.get('/images/scope-stats', { params: scope });
+    return data;
+  },
+
   getThumbnailUrl: (filename: string): string => {
     return authUrl(`/api/images/thumbnails/${filename}`);
   },
@@ -608,6 +616,16 @@ export const clustersApi = {
 
   recluster: async (method?: string): Promise<{ job_id: number }> => {
     const { data } = await api.post('/clusters/recluster', { method });
+    return data;
+  },
+
+  /** Cluster one folder or a set of images. New clusters are added; existing ones stay. */
+  clusterImages: async (scope: {
+    folder_id?: number;
+    image_ids?: number[];
+    params?: ClusterRunParams;
+  }): Promise<{ job_id: number; message: string }> => {
+    const { data } = await api.post('/clusters/recluster', scope);
     return data;
   },
 
