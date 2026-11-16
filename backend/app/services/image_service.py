@@ -249,7 +249,7 @@ class ImageService:
             else:
                 query = query.filter(~Image.id.in_(self.db.query(folder_subq.c.image_id)))
 
-        return query.order_by(Image.created_at.desc()).offset(skip).limit(limit).all()
+        return query.order_by(Image.created_at.desc(), Image.id.desc()).offset(skip).limit(limit).all()
 
     def get_images_by_ids(self, image_ids: list[int]) -> list[Image]:
         """Get images by list of IDs."""

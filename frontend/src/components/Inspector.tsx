@@ -234,8 +234,8 @@ function ScopeOverview({ stats, folderId, clusterId, onClusterFolder, onSelectSt
         {problems && (
           <Attention
             text={problems}
-            action={stats.failed || stats.not_described ? 'Select loaded' : undefined}
-            onAction={() => onSelectStatus(['failed', 'ingested', 'normalized', 'tagged'])}
+            action={stats.not_described ? 'Show not described' : stats.failed ? 'Show failed' : undefined}
+            onAction={() => onSelectStatus(stats.not_described ? ['not_described'] : ['failed'])}
           />
         )}
       </Section>
@@ -431,7 +431,7 @@ export default function Inspector({
   onHide?: () => void;
   /** Replace the selection with these ids. */
   onSelectIds: (ids: number[]) => void;
-  /** Select loaded images with these statuses. */
+  /** Filter the grid to these images (['failed'] or ['not_described']) and enter select mode. */
   onSelectStatus: (statuses: string[]) => void;
   onOpenImage?: (image: Image) => void;
   shortcutsEnabled?: boolean;
