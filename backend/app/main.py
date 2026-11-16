@@ -8,6 +8,7 @@ from app.api import api_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import get_settings
 from app.core.logging_config import configure_logging
+from app.middleware.gzip import MediaAwareGZipMiddleware
 from app.middleware.request_context import RequestContextMiddleware
 
 configure_logging("cura-api")
@@ -23,6 +24,9 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+# Compression runs inside CORS and request context (last added executes first).
+app.add_middleware(MediaAwareGZipMiddleware, minimum_size=1024, compresslevel=5)
 
 # CORS middleware
 app.add_middleware(
