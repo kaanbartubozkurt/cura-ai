@@ -146,7 +146,7 @@ PIDS+=($!)
 # Celery worker (default queue)
 # Use --pool=threads to avoid macOS fork() SIGSEGV with C extensions (Pillow, numpy, imagehash)
 echo -e "${CYAN}[celery]${NC} Starting default queue worker..."
-celery -A app.workers.celery_app worker --loglevel=info --pool=threads --concurrency=4 2>&1 | sed "s/^/[celery] /" &
+celery -A app.workers.celery_app worker -Q celery,ingest --loglevel=info --pool=threads --concurrency=4 2>&1 | sed "s/^/[celery] /" &
 PIDS+=($!)
 
 # Celery worker (clustering queue)

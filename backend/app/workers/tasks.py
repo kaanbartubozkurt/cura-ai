@@ -297,6 +297,10 @@ def process_ingest(self, image_id: int, user_id: int, job_id: int | None = None,
         if not image:
             logger.error(f"Image {image_id} not found")
             return {"status": "error", "message": "Image not found"}
+        # Re-delivery guard (as in process_ingest_batch): already ingested images are skipped.
+        if image.status != ImageStatus.PENDING:
+            logger.info(f"Image {image_id} already {image.status}; skipping ingest")
+            return {"status": "skipped", "image_id": image_id}
 
         # Read file back from storage
         file_data = run_async(storage.get_image(image.object_key))

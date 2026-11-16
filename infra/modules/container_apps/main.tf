@@ -125,8 +125,10 @@ resource "azurerm_container_app" "celery_worker" {
       cpu    = var.celery_worker_cpu
       memory = var.celery_worker_memory
 
+      # Default queue plus "ingest" (thumbnails), so ingest never waits behind batches.
       command = [
         "celery", "-A", "app.workers.celery_app", "worker",
+        "-Q", "celery,ingest",
         "--loglevel=info",
         "--concurrency=${var.celery_worker_concurrency}"
       ]

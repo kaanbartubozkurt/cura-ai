@@ -47,7 +47,7 @@ services:
       FAL_API_KEY: ${FAL_API_KEY}
     volumes:
       - ./storage:/app/storage
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1
+    command: celery -A app.workers.celery_app worker -Q celery,ingest --loglevel=info --concurrency=1
 
   # Celery worker (clustering queue)
   celery-worker-clustering:
