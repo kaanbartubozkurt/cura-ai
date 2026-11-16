@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Activity, Search, Zap } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { billingApi, jobsApi } from '@/lib/api';
+import { DISCORD_INVITE_URL } from '@/lib/links';
 import { useAuth } from '@/contexts/AuthContext';
 import { jobLabel } from '@/hooks/useJobNotifications';
 import { cn, formatNumber } from '@/lib/utils';
@@ -13,6 +14,14 @@ import type { Job } from '@/types';
 
 const ACTIVE_STATUSES = new Set(['pending', 'running']);
 const LOW_BALANCE = 100;
+
+function DiscordLogo() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 shrink-0 fill-[#5865F2]">
+      <path d="M20.3 4.4A19.8 19.8 0 0 0 15.4 3l-.6 1.3a18.4 18.4 0 0 0-5.6 0L8.6 3a19.7 19.7 0 0 0-4.9 1.4C.6 9 0 13.6.3 18.1a19.9 19.9 0 0 0 6 3l1.3-2.1a12.9 12.9 0 0 1-2-1l.5-.4a14.2 14.2 0 0 0 11.8 0l.5.4a12.9 12.9 0 0 1-2 1l1.3 2.1a19.8 19.8 0 0 0 6-3c.5-5.2-.8-9.7-3.4-13.7ZM8.5 15.3c-1.2 0-2.1-1.1-2.1-2.4s.9-2.4 2.1-2.4 2.2 1.1 2.1 2.4c0 1.3-.9 2.4-2.1 2.4Zm7 0c-1.2 0-2.1-1.1-2.1-2.4s.9-2.4 2.1-2.4 2.2 1.1 2.1 2.4c0 1.3-.9 2.4-2.1 2.4Z" />
+    </svg>
+  );
+}
 
 function JobRow({ job }: { job: Job }) {
   const active = ACTIVE_STATUSES.has(job.status);
@@ -164,7 +173,7 @@ export default function Header() {
 
   return (
     <header className="app-header hidden md:flex h-[52px] shrink-0 items-center gap-3 border-b border-border bg-background px-4">
-      <form onSubmit={handleSearch} className="w-full max-w-md max-md:hidden" role="search">
+      <form onSubmit={handleSearch} className="min-w-0 flex-1 max-w-md max-md:hidden" role="search">
         <label className="flex h-8 items-center gap-2 rounded-lg border border-border bg-muted px-2.5 text-muted-foreground focus-within:border-selection focus-within:ring-2 focus-within:ring-selection/20">
           <Search className="h-4 w-4 shrink-0" />
           <input
@@ -178,7 +187,18 @@ export default function Header() {
           />
         </label>
       </form>
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <a
+          href={DISCORD_INVITE_URL}
+          title="Join the SightLab Discord"
+          aria-label="Join the SightLab Discord"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-border px-2.5 text-[13px] hover:bg-accent"
+        >
+          <DiscordLogo />
+          <span className="hidden md:inline">Discord</span>
+        </a>
         <ActivityMenu />
         <BalanceChip />
       </div>

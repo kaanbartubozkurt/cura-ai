@@ -8,6 +8,10 @@ SightLab organizes large image libraries with AI and lets you create and edit im
 
 The rest of this README covers how SightLab works and how to run it yourself.
 
+## Community
+
+Join the [SightLab Discord](https://discord.gg/bH2RqXWmjx) to ask questions, share ideas and give feedback.
+
 ## What you can do
 
 ### Library
@@ -167,6 +171,7 @@ scripts/            cura launcher helpers, data sync, storage migration
 - [docs/model-catalog.md](docs/model-catalog.md): offered models, prices and how to refresh them
 - [docs/discord-job-alerts.md](docs/discord-job-alerts.md): job failure alerts
 - `docs/*-review.md` and [docs/payment-system-architecture.md](docs/payment-system-architecture.md): design reviews written when those areas were built
+- [SightLab Discord](https://discord.gg/bH2RqXWmjx): questions, ideas and feedback
 - Live API reference: `/api/docs` on any running backend
 
 ## Tech stack
