@@ -83,18 +83,11 @@ export default function DescribeInput({
     element.contentEditable = 'false';
     element.tabIndex = 0;
     element.className =
-      'mx-0.5 inline-flex items-center gap-1 rounded border px-1 align-middle text-xs';
+      'mx-0.5 inline-flex items-center rounded border px-1 align-baseline text-sm font-bold';
     element.style.borderColor = sourceColor(index);
     element.style.color = sourceColor(index);
-    if (source.previewUrl) {
-      const image = document.createElement('img');
-      image.src = source.previewUrl;
-      image.alt = '';
-      image.className = 'h-5 w-5 rounded object-cover';
-      element.append(image);
-    }
-    element.append(document.createTextNode(String(index + 1)));
-    element.setAttribute('aria-label', `Source ${index + 1}`);
+    element.textContent = `@Image${index + 1}`;
+    element.setAttribute('aria-label', `@Image${index + 1}`);
     return element;
   }
   // Update existing chips in place so typing and the caret stay native to the editor.
@@ -130,8 +123,8 @@ export default function DescribeInput({
         else {
           element.style.color = sourceColor(index);
           element.style.borderColor = sourceColor(index);
-          element.lastChild!.textContent = String(index + 1);
-          element.setAttribute('aria-label', `Source ${index + 1}`);
+          element.textContent = `@Image${index + 1}`;
+          element.setAttribute('aria-label', `@Image${index + 1}`);
         }
       });
     emit();

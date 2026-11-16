@@ -363,17 +363,6 @@ export default function DescribeResults({
                 <span className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/65 px-1.5 py-0.5 text-[10px] text-white">
                   Edited
                 </span>
-                <div className="pointer-events-none absolute left-2 top-2 flex gap-1">
-                  {storedSources(image).map((_, index) => (
-                    <span
-                      key={index}
-                      className="grid h-4 w-4 place-items-center rounded-full text-[9px] text-white"
-                      style={{ background: sourceColor(index) }}
-                    >
-                      {index + 1}
-                    </span>
-                  ))}
-                </div>
                 <button
                   className="absolute bottom-2 right-2 rounded bg-background/95 px-2 py-1 text-xs opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
                   onClick={() => use(image)}
