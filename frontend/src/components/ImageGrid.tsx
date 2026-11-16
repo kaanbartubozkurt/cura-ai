@@ -224,10 +224,16 @@ function Tile({
 // adds to the shortest column; existing DOM nodes and reserved heights stay put.
 export type GridItem = { id: number; width?: number | null; height?: number | null };
 
-export function AppendOnlyGrid<T extends GridItem>({ images, density, children }: {
+export function AppendOnlyGrid<T extends GridItem>({
+  images,
+  density,
+  children,
+  refreshRatios = false,
+}: {
   images: T[];
   density: Density;
   children: (image: T) => ReactNode;
+  refreshRatios?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -255,6 +261,13 @@ export function AppendOnlyGrid<T extends GridItem>({ images, density, children }
       current.ids.length > images.length || current.ids.some((id, i) => images[i]?.id !== id)) {
     current = { count, density, ids: [], columns: [], ratios: [] };
     layout.current = current;
+  }
+  if (refreshRatios) {
+    current.ratios = current.ratios.map((ratio, i) => (
+      images[i]?.width && images[i]?.height
+        ? images[i].width! / images[i].height!
+        : ratio
+    ));
   }
   const heights = Array<number>(count).fill(0);
   current.columns.forEach((column, i) => { heights[column] += tileWidth / current.ratios[i] + 8; });

@@ -23,11 +23,11 @@ Join the [SightLab Discord](https://discord.gg/bH2RqXWmjx) to ask questions, sha
 - **Created and edited images join the library** like any upload. They are searchable and can be clustered.
 
 ### Tools
-All tools share one layout: sources and results on the canvas, a prompt box at the bottom, and model settings on the right. Each run is a background job with a price estimate shown before you start.
+All tools share a canvas, a prompt box at the bottom, and settings on the right. Describe the change keeps its source attachments inside the prompt box. Each run is a background job with a price estimate shown before you start.
 
 - **Create**: make new images from a prompt, optionally with one of your LoRA models. Browse creations as cards, view images fitted to your screen, and keep your settings for each model across devices.
 - **Edit** has four jobs. You choose the job first and then a model that can do it:
-  - **Describe the change**: say what should change, using one or more source images.
+  - **Describe the change**: attach and reorder source images in the prompt box, reference them with numbered image chips, and browse edits as library-style cards. Hover a source to inspect its original; reuse a result as your next source.
   - **Paint an area**: brush over the part to change.
   - **Arrange objects**: draw named boxes to place, move or remove objects.
   - **Keep a subject**: keep a person or object consistent across a single image or a series.
