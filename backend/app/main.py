@@ -1,5 +1,7 @@
 """FastAPI application entry point."""
+import asyncio
 import logging
+from contextlib import suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +11,9 @@ from app.api.webhooks import router as webhooks_router
 from app.core.config import get_settings
 from app.core.logging_config import configure_logging
 from app.middleware.gzip import MediaAwareGZipMiddleware
+from app.middleware.load_timings import LoadTimingsMiddleware
 from app.middleware.request_context import RequestContextMiddleware
+from app.services.load_timings import run_background
 
 configure_logging("cura-api")
 logger = logging.getLogger(__name__)
@@ -41,6 +45,7 @@ app.add_middleware(
 # Request context middleware — sets trace_id + request_id on every request.
 # Added after CORS so it executes first (ASGI: last added = first executed).
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(LoadTimingsMiddleware)
 
 # Include API routes
 app.include_router(api_router, prefix="/api")
@@ -156,6 +161,7 @@ async def startup():
     # Validate model registry against cost catalog
     _validate_model_registry()
 
+    app.state.load_timings_task = asyncio.create_task(run_background())
     logger.info("Application started successfully")
 
 
@@ -193,4 +199,9 @@ def _validate_model_registry():
 @app.on_event("shutdown")
 async def shutdown():
     """Cleanup on shutdown."""
+    task = getattr(app.state, "load_timings_task", None)
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
     logger.info("Application shutting down")

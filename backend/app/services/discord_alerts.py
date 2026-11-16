@@ -17,14 +17,20 @@ def _error_summary(error):
 
 
 def send_failure_alert(job_id, job_type, error, settings):
+    send_alert(
+        f"Job {int(job_id)} failed\nType: {job_type.value}\n"
+        f"Environment: {settings.environment}\nError: {_error_summary(error)}",
+        settings,
+    )
+
+
+def send_alert(content, settings):
+    """Send only caller-sanitized content, without exposing the webhook secret."""
     if settings.environment not in ("dev", "prod") or not settings.discord_alert_webhook_url:
         return
     try:
         payload = {
-            "content": (
-                f"Job {int(job_id)} failed\nType: {job_type.value}\n"
-                f"Environment: {settings.environment}\nError: {_error_summary(error)}"
-            ),
+            "content": content,
             "allowed_mentions": {"parse": []},
         }
         # Client.send is instrumented by Sentry and OTel and emits the full URL

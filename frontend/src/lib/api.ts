@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { recordApiTiming, normalizeTimingPath } from './loadTimings';
 import type {
   ModelCatalog,
   AdminUserBalance,
@@ -125,6 +126,7 @@ const SLOW_REQUEST_THRESHOLD = 2000;
 // Extract meaningful error messages + handle 401 with token refresh
 api.interceptors.response.use(
   (response) => {
+    recordApiTiming(response.config, response.status);
     // Capture correlation IDs from response headers
     const traceId = response.headers['x-trace-id'];
     if (traceId) lastTraceId = traceId;
@@ -135,7 +137,7 @@ api.interceptors.response.use(
       const duration = Date.now() - startTime;
       if (duration > SLOW_REQUEST_THRESHOLD) {
         import('@/lib/observability').then(({ trackSlowRequest }) => {
-          trackSlowRequest(response.config.url || '', response.config.method || 'get', duration);
+          trackSlowRequest(normalizeTimingPath(response.config.url || ''), response.config.method || 'get', duration);
         });
       }
     }
@@ -143,13 +145,14 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
+    recordApiTiming(error.config, error.response?.status);
     // Track slow failed requests
     const startTime = error.config?.metadata?.startTime;
     if (startTime) {
       const duration = Date.now() - startTime;
       if (duration > SLOW_REQUEST_THRESHOLD) {
         import('@/lib/observability').then(({ trackSlowRequest }) => {
-          trackSlowRequest(error.config?.url || '', error.config?.method || 'get', duration);
+          trackSlowRequest(normalizeTimingPath(error.config?.url || ''), error.config?.method || 'get', duration);
         });
       }
     }

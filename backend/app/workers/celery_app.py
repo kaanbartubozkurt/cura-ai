@@ -29,6 +29,7 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=[
         "app.workers.tasks",
+        "app.workers.load_timing_tasks",
         "app.workers.generation_tasks",
     ],
 )
@@ -93,6 +94,10 @@ celery_app.conf.update(
 
     # Beat schedule
     beat_schedule={
+        "evaluate-load-timings": {
+            "task": "app.workers.load_timing_tasks.evaluate_load_timings",
+            "schedule": 60.0,
+        },
         "cleanup-pipeline-logs": {
             "task": "app.workers.tasks.cleanup_old_pipeline_logs",
             "schedule": 86400.0,  # once per day

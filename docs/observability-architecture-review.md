@@ -283,10 +283,10 @@ User-facing error feedback is still primarily through Sonner toasts, but errors 
 
 | Aspect | Status |
 |---|---|
-| Alert rules | **None defined** |
+| Alert rules | **Active**: load-time percentile thresholds, cooldown and recovery alerts; see [Load time alerts](load-time-alerts.md) |
 | Dashboards | Admin-only in-app: MetricsView (30s polling), OperationsMonitor, ReconciliationView, AnomaliesView |
 | SLOs | **None** |
-| On-call hooks | **None** |
+| On-call hooks | Discord failed-job and load-time alerts in dev/prod; see [Load time alerts](load-time-alerts.md) |
 | Azure Monitor alerts | **Not configured** in Terraform |
 
 ### Sampling / PII
