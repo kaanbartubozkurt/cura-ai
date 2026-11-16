@@ -80,6 +80,7 @@
   "/api/edit/images",
   "/api/edit/images/:id",
   "/api/edit/images/:id/file",
+  "/api/edit/images/:id/sources/:id",
   "/api/edit/images/bulk-delete",
   "/api/edit/thumbnails/:id",
   "/api/edit/upload-source",

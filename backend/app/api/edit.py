@@ -1,5 +1,6 @@
 """Edit API endpoints for AI-powered image editing."""
 import logging
+import re
 import uuid
 from typing import Literal
 
@@ -341,13 +342,14 @@ async def list_edit_images(
     current_user: User = Depends(get_current_user),
 ):
     """List edited images."""
-    from app.api.generation import GeneratedImageListResponse, _gen_to_response
+    from app.api.generation import GeneratedImageListResponse, _gen_to_response, _library_image_ids
 
     gen_service = get_generation_service(db, current_user.id)
     items = gen_service.get_generated_images(mode="edit", skip=skip, limit=limit)
     total = gen_service.count_generated_images(mode="edit")
+    library_ids = _library_image_ids(db, items)
     return GeneratedImageListResponse(
-        items=[_gen_to_response(g, db) for g in items],
+        items=[_gen_to_response(g, db, library_ids) for g in items],
         total=total,
         skip=skip,
         limit=limit,
@@ -392,6 +394,36 @@ async def delete_edit_image(
     gen_service = get_generation_service(db, current_user.id)
     if not await gen_service.delete_generated_image(gen_id):
         raise HTTPException(status_code=404, detail="Edited image not found")
+
+
+@router.get("/images/{gen_id}/sources/{index}")
+async def serve_edit_upload_source(
+    gen_id: int,
+    index: int,
+    resolve: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_token_param),
+):
+    """Serve an owned uploaded input when the edit has no library history copy."""
+    from app.services.storage import get_storage_service
+
+    gen = get_generation_service(db, current_user.id).get_generated_image(gen_id)
+    if not gen:
+        raise HTTPException(status_code=404, detail="Edited image not found")
+    sources = (gen.generation_params or {}).get("sources", {}).get("ordered", [])
+    if index < 0 or index >= len(sources):
+        raise HTTPException(status_code=404, detail="Source not found")
+    source = sources[index]
+    key = source.get("key", "")
+    match = re.fullmatch(rf"edit-sources/{current_user.id}-[a-f0-9]{{32}}\.(jpg|png|webp|gif)", key)
+    if source.get("type") != "upload" or not match:
+        raise HTTPException(status_code=404, detail="Source not found")
+    extension = match.group(1)
+    mime_type = "image/jpeg" if extension == "jpg" else f"image/{extension}"
+    response = get_storage_service().get_file_response("generated", key, mime_type, resolve=resolve)
+    if response is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    return response
 
 
 @router.get("/images/{gen_id}/file")
