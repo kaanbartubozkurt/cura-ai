@@ -217,6 +217,8 @@ class GeneratedImageResponse(BaseModel):
     thumbnail_uri_medium: str | None
     job_id: int | None
     library_image_id: int | None = None
+    library_thumbnail_uri_medium: str | None = None
+    library_thumbnail_uri_large: str | None = None
     cost_sparks: float | None = None
     created_at: str
     completed_at: str | None
@@ -329,20 +331,20 @@ def _lora_to_response(lora, db: Session) -> LoraModelResponse:
     )
 
 
-def _library_image_ids(db: Session, gens) -> dict[int, int]:
-    """Map generation id to its library copy's image id, in one query."""
+def _library_image_ids(db: Session, gens) -> dict[int, tuple[int, str | None, str | None]]:
+    """Map generation ids to owned library ids and previews, in one query."""
     from app.models.image import Image
 
     if not gens:
         return {}
-    rows = db.query(Image.generated_image_id, Image.id).filter(
+    rows = db.query(Image.generated_image_id, Image.id, Image.thumbnail_uri_medium, Image.thumbnail_uri_large).filter(
         Image.generated_image_id.in_([g.id for g in gens]),
         Image.user_id == gens[0].user_id,
     ).all()
-    return {gen_id: image_id for gen_id, image_id in rows}
+    return {gen_id: (image_id, medium, large) for gen_id, image_id, medium, large in rows}
 
 
-def _gen_to_response(gen, db: Session, library_ids: dict[int, int] | None = None) -> GeneratedImageResponse:
+def _gen_to_response(gen, db: Session, library_ids: dict[int, tuple[int, str | None, str | None]] | None = None) -> GeneratedImageResponse:
     from app.models.lora_model import LoraModel
 
     # Build loras list from generation_params if available
@@ -375,8 +377,11 @@ def _gen_to_response(gen, db: Session, library_ids: dict[int, int] | None = None
 
     if library_ids is None:
         library_ids = _library_image_ids(db, [gen])
+    library = library_ids.get(gen.id, (None, None, None))
     return GeneratedImageResponse(
-        library_image_id=library_ids.get(gen.id),
+        library_image_id=library[0],
+        library_thumbnail_uri_medium=library[1],
+        library_thumbnail_uri_large=library[2],
         id=gen.id,
         prompt=gen.prompt,
         negative_prompt=gen.negative_prompt,

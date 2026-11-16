@@ -1,6 +1,8 @@
 'use client';
 
 import LibraryImage from '@/components/LibraryImage';
+import ProgressiveImage from '@/components/ProgressiveImage';
+import { useImagePixels } from '@/hooks/useImagePixels';
 
 import { useState, useEffect, useRef, useMemo, Suspense } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -30,7 +32,38 @@ export default function GeneratePage() {
   );
 }
 
+function generationPreview(image: GeneratedImage) {
+  const uri = image.thumbnail_uri_medium || image.thumbnail_uri_small;
+  return uri ? generationApi.getThumbnailUrl(uri.split('/').pop()!) : generationApi.getImageUrl(image.id);
+}
+
+function CreateThumbnail({ image, density, onPreviewLoaded }: {
+  image: GeneratedImage;
+  density: 'S' | 'M' | 'L';
+  onPreviewLoaded: (source: string, url: string) => void;
+}) {
+  const { host, pixels } = useImagePixels(image.width, image.height);
+  const uri = pixels <= 400
+    ? image.library_thumbnail_uri_medium || image.library_thumbnail_uri_large
+    : image.library_thumbnail_uri_large;
+  const high = uri ? imagesApi.getThumbnailUrl(uri.split('/').pop()!)
+    : !image.library_image_id && pixels > 400 && density !== 'S' ? generationApi.getImageUrl(image.id) : undefined;
+  return (
+    <span ref={host} className="block h-full w-full">
+      <ProgressiveImage
+        src={generationPreview(image)}
+        highSrc={pixels > 0 ? high : undefined}
+        alt={image.prompt}
+        loading="lazy"
+        className="h-full w-full object-cover"
+        onPreviewLoaded={onPreviewLoaded}
+      />
+    </span>
+  );
+}
+
 function GeneratePageInner() {
+  const previews = useRef(new Map<number, { source: string; url: string }>());
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const [references, setReferences] = useState<Array<{ id: number; url: string }>>([]);
@@ -674,13 +707,10 @@ function GeneratePageInner() {
                   >
                     {image.status === 'completed' ? (
                       <>
-                        <LibraryImage
-                          src={image.thumbnail_uri_medium || image.thumbnail_uri_small
-                            ? generationApi.getThumbnailUrl((image.thumbnail_uri_medium || image.thumbnail_uri_small)!.split('/').pop()!)
-                            : generationApi.getImageUrl(image.id)}
-                          alt={image.prompt}
-                          loading="lazy"
-                          className="h-full w-full object-cover"
+                        <CreateThumbnail
+                          image={image}
+                          density={density}
+                          onPreviewLoaded={(source, url) => previews.current.set(image.id, { source, url })}
                         />
                         <span className="absolute bottom-2 left-2 rounded bg-black/45 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-white backdrop-blur">
                           Generated
@@ -890,8 +920,10 @@ function GeneratePageInner() {
             <div className="relative min-h-0 min-w-0 bg-black/40 p-10">
               <button id="create-viewer-close" aria-label="Close viewer" onClick={() => setSelectedImageId(null)} className="absolute left-3 top-3 z-10 rounded bg-black/60 px-2 py-1 text-sm text-white">Close · Esc</button>
               {selectedImage.status === 'completed' && selectedImage.object_key ? (
-                <LibraryImage
-                  src={generationApi.getImageUrl(selectedImage.id)}
+                <ProgressiveImage
+                  src={previews.current.get(selectedImage.id)?.source || generationPreview(selectedImage)}
+                  resolvedSource={previews.current.get(selectedImage.id)?.url}
+                  highSrc={generationApi.getImageUrl(selectedImage.id)}
                   alt={selectedImage.prompt}
                   className="h-full w-full object-contain"
                 />

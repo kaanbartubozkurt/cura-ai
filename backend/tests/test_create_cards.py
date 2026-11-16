@@ -124,7 +124,7 @@ def test_generate_filter_includes_legacy_and_excludes_edits():
 def test_response_exposes_owned_library_copy(library_id):
     db = Mock()
     query = db.query.return_value
-    query.filter.return_value.all.return_value = [(8, library_id)] if library_id else []
+    query.filter.return_value.all.return_value = [(8, library_id, "medium.jpg", "large.jpg")] if library_id else []
     gen = SimpleNamespace(
         id=8, user_id=7, prompt="sea", negative_prompt=None, base_model="nano-banana-pro",
         generation_provider="fal", lora_model_id=None, lora_model=None, lora_scale=None,
@@ -135,6 +135,8 @@ def test_response_exposes_owned_library_copy(library_id):
     )
     result = generation._gen_to_response(gen, db)
     assert result.library_image_id == library_id
+    assert result.library_thumbnail_uri_medium == ("medium.jpg" if library_id else None)
+    assert result.library_thumbnail_uri_large == ("large.jpg" if library_id else None)
     filters = query.filter.call_args.args
     assert len(filters) == 2
     assert "images.user_id" in str(filters[1])
@@ -142,9 +144,9 @@ def test_response_exposes_owned_library_copy(library_id):
 
 def test_list_looks_up_library_copies_in_one_query():
     db = Mock()
-    db.query.return_value.filter.return_value.all.return_value = [(1, 11), (3, 33)]
+    db.query.return_value.filter.return_value.all.return_value = [(1, 11, "m1", "l1"), (3, 33, None, None)]
     gens = [SimpleNamespace(id=i, user_id=7) for i in (1, 2, 3)]
-    assert generation._library_image_ids(db, gens) == {1: 11, 3: 33}
+    assert generation._library_image_ids(db, gens) == {1: (11, "m1", "l1"), 3: (33, None, None)}
     assert db.query.call_count == 1
     assert generation._library_image_ids(db, []) == {}
 
@@ -153,3 +155,27 @@ def test_list_default_still_excludes_edits():
     import inspect
 
     assert inspect.signature(generation.list_generated_images).parameters["mode"].default == "generate"
+
+
+def test_library_preview_lookup_filters_owner_and_all_generation_ids():
+    from sqlalchemy.orm import Query
+
+    db = Mock()
+    db.query.side_effect = lambda *columns: Query(columns)
+    statements = []
+    original = Query.all
+    try:
+        Query.all = lambda self: statements.append(str(self.statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        ))) or []
+        result = generation._library_image_ids(db, [
+            SimpleNamespace(id=8, user_id=7), SimpleNamespace(id=9, user_id=7),
+        ])
+    finally:
+        Query.all = original
+    assert result == {}
+    assert len(statements) == 1
+    assert "images.user_id = 7" in statements[0]
+    assert "images.generated_image_id IN (8, 9)" in statements[0]
+    assert "images.thumbnail_uri_medium" in statements[0]
+    assert "images.thumbnail_uri_large" in statements[0]
