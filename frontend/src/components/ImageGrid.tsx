@@ -1,5 +1,6 @@
 'use client';
 
+import { useFirstImagesTiming } from '@/lib/loadTimings';
 import JobChooser from '@/components/tools/JobChooser';
 
 import { useMobileSheet } from '@/hooks/useMobileSheet';
@@ -136,6 +137,7 @@ function Tile({
 
   return (
     <div
+      data-load-card={src ? image.id : undefined}
       data-image-id={image.id}
       data-selecting={selecting}
       className={cn(
@@ -299,6 +301,7 @@ function ImageGridContent({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  useFirstImagesTiming(`${pathname}?${searchParams.toString()}`);
   const imageIdParam = searchParams.get('image_id');
   const entryTool = searchParams.get('tool');
   const sourceParam = searchParams.get('source') as SourceKey | null;

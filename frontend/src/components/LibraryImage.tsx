@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ImgHTMLAttributes } from 'react';
+import { startImageTiming } from '@/lib/loadTimings';
 import { resolveImageUrl } from '@/lib/api';
 
 // JWT rotation must not change the identity of an already loaded image.
@@ -35,6 +36,12 @@ function ImageContent({ src, initialSource, resolvedSource, loading, ...props }:
     return candidate.hostname.endsWith('.blob.core.windows.net') && expiry && Date.parse(expiry) > Date.now() + 60_000
       ? initialSource : undefined;
   });
+  const finishTiming = useRef<() => void>(() => {});
+  const timedUrl = useRef<string | undefined>(undefined);
+  if (timedUrl.current !== url) {
+    timedUrl.current = url;
+    finishTiming.current = url ? startImageTiming(src) : () => {};
+  }
   const hasInitialUrl = useRef(!!url);
   const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
@@ -85,6 +92,7 @@ function ImageContent({ src, initialSource, resolvedSource, loading, ...props }:
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img {...props} ref={host} alt={props.alt || ''} src={url} loading={loading} onLoad={(event) => {
+          finishTiming.current();
           setLoaded(true);
           props.onLoad?.(event);
         }} onError={(event) => {

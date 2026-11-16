@@ -2,7 +2,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
 
     discord_alert_webhook_url: SecretStr = SecretStr("")
+
+    load_alert_window_minutes: int = Field(default=10, ge=1, le=120)
+    load_alert_min_samples: int = Field(default=5, ge=1)
+    load_alert_cooldown_seconds: int = Field(default=1800, ge=1)
+    load_alert_library_first_images_ms: float = 4000
+    load_alert_api_ms: float = 2000
+    load_alert_image_ms: float = 3000
+    load_alert_server_ms: float = 1000
 
     # Watch folder
     watch_folder_path: str = "./watch_folder"

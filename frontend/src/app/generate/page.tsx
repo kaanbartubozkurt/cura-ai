@@ -1,5 +1,6 @@
 'use client';
 
+import { useFirstImagesTiming } from '@/lib/loadTimings';
 import LibraryImage from '@/components/LibraryImage';
 import ProgressiveImage from '@/components/ProgressiveImage';
 import { useImagePixels } from '@/hooks/useImagePixels';
@@ -49,7 +50,7 @@ function CreateThumbnail({ image, density, onPreviewLoaded }: {
   const high = uri ? imagesApi.getThumbnailUrl(uri.split('/').pop()!)
     : !image.library_image_id && pixels > 400 && density !== 'S' ? generationApi.getImageUrl(image.id) : undefined;
   return (
-    <span ref={host} className="block h-full w-full">
+    <span ref={host} data-load-card={image.id} className="block h-full w-full">
       <ProgressiveImage
         src={generationPreview(image)}
         highSrc={pixels > 0 ? high : undefined}
@@ -66,6 +67,7 @@ function GeneratePageInner() {
   const previews = useRef(new Map<number, { source: string; url: string }>());
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
+  useFirstImagesTiming(`/generate?${searchParams.toString()}`);
   const [references, setReferences] = useState<Array<{ id: number; url: string }>>([]);
 
   useEffect(() => {

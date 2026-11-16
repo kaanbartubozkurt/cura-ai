@@ -386,6 +386,8 @@ npm run lint         # ESLint
 
 ## Observability
 
+- Load-time telemetry and Discord alerts: browser/API/image timings, server histograms, configurable thresholds, and admin summaries. See `docs/load-time-alerts.md`.
+
 **Correlation IDs:** Every HTTP request gets a `trace_id` and `request_id` injected by `RequestContextMiddleware` (`backend/app/middleware/request_context.py`). The frontend generates `trace_id` per request and `session_id` per browser session (persisted in localStorage). Headers flow: frontend sends `X-Trace-Id` + `X-Session-Id` → backend adopts trace_id (or generates one if absent) + generates `request_id` → both echoed in response headers `X-Trace-Id` and `X-Request-Id`. All backend logs include `[trace=<id>]` via a custom log record factory.
 
 **Health check:** `GET /health` verifies DB (SELECT 1), Redis (PING), and storage (directory exists / container accessible). Returns `{"status": "healthy"|"degraded", "checks": {"database": "ok", "redis": "ok"|"error: ...", "storage": "ok"}}`. Always returns HTTP 200 (Azure Container Apps would restart on 503).
