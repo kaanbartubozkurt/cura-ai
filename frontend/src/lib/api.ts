@@ -721,8 +721,9 @@ export const jobsApi = {
     return data;
   },
 
-  reprocessSelected: async (imageIds: number[]): Promise<{ job_id: number; total: number }> => {
-    const { data } = await api.post('/jobs/pipeline/reprocess-selected', { image_ids: imageIds });
+  /** Tag, describe and embed these images; `model` overrides the default vision model for this batch. */
+  reprocessSelected: async (imageIds: number[], model?: string): Promise<{ job_id: number; total: number }> => {
+    const { data } = await api.post('/jobs/pipeline/reprocess-selected', { image_ids: imageIds, ...(model ? { model } : {}) });
     return data;
   },
 

@@ -292,6 +292,12 @@ async def trigger_reprocess_selected(
 ):
     """Reprocess specific images by ID."""
     _check_no_active_batch(db, current_user.id)
+    if request.model is not None:
+        from app.services.model_catalog import get_language_model
+
+        offered = get_language_model(request.model)
+        if offered is None or "vision" not in offered.capabilities:
+            raise HTTPException(status_code=400, detail=f"Model {request.model} can't describe images")
     images = db.query(Image).filter(Image.id.in_(request.image_ids), Image.user_id == current_user.id).all()
     found_ids = {img.id for img in images}
     missing = set(request.image_ids) - found_ids
@@ -306,13 +312,14 @@ async def trigger_reprocess_selected(
         status=JobStatus.PENDING,
         total_items=len(image_ids),
         result={"image_ids": image_ids},
+        parameters={"model": request.model} if request.model else {},
         user_id=current_user.id,
     )
     db.add(job)
     db.commit()
     db.refresh(job)
 
-    task = dispatch(run_batch_reprocess, job.id, current_user.id, image_ids)
+    task = dispatch(run_batch_reprocess, job.id, current_user.id, image_ids, model=request.model)
     job.celery_task_id = task.id
     db.commit()
 
@@ -399,7 +406,8 @@ async def retry_job(job_id: int, db: Session = Depends(get_db), current_user: Us
             db.delete(new_job)
             db.commit()
             raise HTTPException(status_code=400, detail="No image IDs found in original job to retry")
-        task = dispatch(run_batch_reprocess, new_job.id, user_id, image_ids)
+        task = dispatch(run_batch_reprocess, new_job.id, user_id, image_ids,
+                        model=(job.parameters or {}).get("model"))
     elif job.job_type == JobType.GENERATE_IMAGE:
         from app.workers.generation_tasks import generate_image
         params = job.parameters or {}

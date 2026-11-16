@@ -372,6 +372,9 @@ class BatchReprocessRequest(BaseModel):
     """Request to reprocess specific images."""
 
     image_ids: list[int] = Field(..., min_length=1)
+    model: str | None = Field(
+        default=None, description="Vision model for tag + describe (catalog language model id); default from settings"
+    )
 
 
 class BatchJobImageInfo(BaseModel):

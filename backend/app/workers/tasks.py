@@ -1440,7 +1440,7 @@ def run_full_pipeline(self, job_id: int, user_id: int, trace_id: str | None = No
 
 
 @celery_app.task(bind=True, queue='clustering', acks_late=False, max_retries=0, reject_on_worker_lost=False)
-def run_batch_reprocess(self, job_id: int, user_id: int, image_ids: list[int], trace_id: str | None = None, session_id: str | None = None) -> dict:
+def run_batch_reprocess(self, job_id: int, user_id: int, image_ids: list[int], trace_id: str | None = None, session_id: str | None = None, model: str | None = None) -> dict:
     """
     Reprocess a batch of images: reset each to INGESTED, dispatch process_image_pipeline,
     then poll until all images have finished processing.
@@ -1485,7 +1485,8 @@ def run_batch_reprocess(self, job_id: int, user_id: int, image_ids: list[int], t
             for image_id in image_ids:
                 try:
                     image_service.update_status(image_id, ImageStatus.INGESTED)
-                    _dispatch_pipeline_child(db, job, image_id, user_id)
+                    # model: vision model chosen for this batch (None = the user's default).
+                    _dispatch_pipeline_child(db, job, image_id, user_id, model=model)
                     queued += 1
                 except Exception as e:
                     logger.error(f"Failed to queue reprocess for image {image_id}: {_unwrap_error(e)}")

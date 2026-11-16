@@ -30,6 +30,7 @@ import { billingApi, clustersApi, foldersApi, imagesApi, jobsApi, settingsApi } 
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { cn } from '@/lib/utils';
 import type { ClusterRunParams, Image, ScopeStats } from '@/types';
+import ModelPicker from './ModelPicker';
 
 /** Organizing actions the library inspector offers. Creation lives in Tools. */
 export type InspectorTool =
@@ -444,6 +445,8 @@ export default function Inspector({
   const [name, setName] = useState('');
   const [folder, setFolder] = useState('');
   const [describeAll, setDescribeAll] = useState(false);
+  // Vision model for this describe run; empty = the default from Settings.
+  const [describeModel, setDescribeModel] = useState('');
   const [method, setMethod] = useState<ClusterMethod>('hdbscan');
   const [minSize, setMinSize] = useState(5);
   const [maxClusters, setMaxClusters] = useState(8);
@@ -556,7 +559,7 @@ export default function Inspector({
     void (async () => {
       switch (action) {
         case 'Describe':
-          await jobsApi.reprocessSelected(ids);
+          await jobsApi.reprocessSelected(ids, describeModel || undefined);
           break;
         case 'Cluster':
           await clustersApi.clusterImages(folderScope ? { folder_id: folderId, params } : { image_ids: ids, params });
@@ -589,7 +592,8 @@ export default function Inspector({
     });
   };
 
-  const visionModel = providerConfig?.fal_vision_model || catalog?.defaults.vision_model;
+  const defaultVisionModel = providerConfig?.fal_vision_model || catalog?.defaults.vision_model;
+  const visionModel = describeModel || defaultVisionModel;
   const languageCost = visionModel ? visionCosts?.costs.fal?.[visionModel] : undefined;
   const cost = tool === 'Describe' && languageCost ? languageCost.total * describeTargets.length : undefined;
   const ScopeIcon = clusterId ? LayoutGrid : folderId ? FolderOpen : ImageIcon;
@@ -697,7 +701,25 @@ export default function Inspector({
                 </label>
               ))}
             </fieldset>
-            <Facts rows={[['Vision model', visionModel || 'Your default from Settings'], ['Steps', 'Tag → describe → embed']]} />
+            <div className="space-y-1.5">
+              <span className="text-[12.5px] font-medium">Vision model</span>
+              <ModelPicker
+                models={(catalog?.language ?? [])
+                  .filter((m) => m.capabilities.includes('vision'))
+                  .map((m) => ({
+                    id: m.id,
+                    label: m.id === defaultVisionModel ? `${m.label} (default)` : m.label,
+                    provider: m.vendor,
+                    cost: visionCosts?.costs.fal?.[m.id]?.total,
+                  }))}
+                value={visionModel ?? ''}
+                onChange={(id) => setDescribeModel(id === defaultVisionModel ? '' : id)}
+              />
+              <p className="text-[11.5px] text-muted-foreground">
+                If a model declines or fails some images, select the failed ones and try another model.
+              </p>
+            </div>
+            <Facts rows={[['Steps', 'Tag → describe → embed']]} />
             <Note>
               {hasBatchRunning
                 ? 'A describe job is already running. Wait for it to finish before starting another.'
