@@ -27,6 +27,18 @@ const SOURCE_FILTERS: { key: SourceKey | null; label: string }[] = [
   { key: 'edited', label: 'Edited' },
 ];
 
+type StatusKey = 'not_described' | 'failed';
+const STATUS_FILTERS: { key: StatusKey | null; label: string }[] = [
+  { key: null, label: 'Any status' },
+  { key: 'not_described', label: 'Not described' },
+  { key: 'failed', label: 'Failed' },
+];
+// Not described = pending → tagged, plus failed images that never got a description.
+const STATUS_PARAMS: Record<StatusKey, FetchParams> = {
+  not_described: { max_status: 'tagged' },
+  failed: { status: 'failed' },
+};
+
 const COLUMN_WIDTH: Record<Density, number> = { S: 150, M: 210, L: 300 };
 const DENSITY_KEY = 'library-density';
 const PAGE_SIZE = 60;
@@ -378,6 +390,16 @@ function ImageGridContent({
     }
   };
 
+  const [statusFilter, setStatusFilter] = useState<StatusKey | null>(null);
+  const changeStatus = (next: StatusKey | null) => {
+    setStatusFilter(next);
+    setSelectedIds(new Set());
+    setSelectedCache(new Map());
+  };
+  // Selected images that aren't loaded in the grid yet (from "Select all N").
+  const [selectedCache, setSelectedCache] = useState<Map<number, Image>>(new Map());
+  const [selectingAll, setSelectingAll] = useState(false);
+
   const changeSource = (s: SourceKey | null) => {
     const next = new URLSearchParams(searchParams.toString());
     if (s) next.set('source', s);
@@ -406,9 +428,9 @@ function ImageGridContent({
 
   const { data, isLoading, isError, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery({
-      queryKey: [queryKeyPrefix, source],
+      queryKey: [queryKeyPrefix, source, statusFilter],
       queryFn: ({ pageParam }) =>
-        fetchImages({ ...(source ? { source } : {}), skip: pageParam, limit: PAGE_SIZE }),
+        fetchImages({ ...(source ? { source } : {}), ...(statusFilter ? STATUS_PARAMS[statusFilter] : {}), skip: pageParam, limit: PAGE_SIZE }),
       initialPageParam: 0,
       getNextPageParam: (last, pages) => {
         const loaded = pages.reduce((n, p) => n + p.items.length, 0);
@@ -450,6 +472,7 @@ function ImageGridContent({
     ) ?? false;
 
   const clearSelection = () => {
+    setSelectedCache(new Map());
     setSelectedIds(new Set());
     setSelectMode(false);
     setToolImages(null);
@@ -468,14 +491,39 @@ function ImageGridContent({
     setSelectMode(true);
     setSelectedIds(new Set(images.map((i) => i.id)));
   };
-  const selectStatuses = (statuses: string[]) => {
-    const ids = images.filter((i) => statuses.includes(i.status)).map((i) => i.id);
-    if (!ids.length) return;
+  // Select every image matching the current filters, fetching pages not loaded yet.
+  const selectAllMatching = async () => {
     setSelectMode(true);
-    setSelectedIds(new Set(ids));
+    if (images.length >= total) {
+      selectAllLoaded();
+      return;
+    }
+    setSelectingAll(true);
+    try {
+      const all: Image[] = [];
+      for (let skip = 0; skip < total; skip += 200) {
+        const page = await fetchImages({
+          ...(source ? { source } : {}),
+          ...(statusFilter ? STATUS_PARAMS[statusFilter] : {}),
+          skip,
+          limit: 200,
+        });
+        all.push(...page.items);
+        if (page.items.length < 200) break;
+      }
+      const matching = all.filter((image) => !deleting.has(image.id));
+      setSelectedCache(new Map(matching.map((image) => [image.id, image])));
+      setSelectedIds(new Set(matching.map((image) => image.id)));
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+  const selectStatuses = (statuses: string[]) => {
+    changeStatus(statuses.length === 1 && statuses[0] === 'failed' ? 'failed' : 'not_described');
+    setSelectMode(true);
   };
 
-  const allLoadedSelected = images.length > 0 && images.every((img) => selectedIds.has(img.id));
+  const allLoadedSelected = images.length > 0 && images.every((img) => selectedIds.has(img.id)) && selectedIds.size >= total;
   const selecting = selectMode || selectedIds.size > 0;
 
   useEffect(() => {
@@ -563,6 +611,7 @@ function ImageGridContent({
           <div className={showSourceFilter ? '' : 'md:hidden'}>
             <Segmented label="Source" options={SOURCE_FILTERS} value={source} onChange={changeSource} />
           </div>
+          <Segmented label="Status" options={STATUS_FILTERS} value={statusFilter} onChange={changeStatus} />
           <div className="ml-auto hidden md:flex items-center gap-1.5">
             {selecting && (
               <span className="px-1 text-[12.5px] font-medium tabular-nums text-selection">{selectedIds.size} selected</span>
@@ -584,12 +633,11 @@ function ImageGridContent({
             </button>
             {images.length > 0 && (
               <button
-                onClick={() =>
-                  allLoadedSelected ? setSelectedIds(new Set()) : selectAllLoaded()
-                }
-                className="h-7 rounded-md px-2.5 text-[12.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => (allLoadedSelected ? setSelectedIds(new Set()) : void selectAllMatching())}
+                disabled={selectingAll}
+                className="h-7 rounded-md px-2.5 text-[12.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
               >
-                {allLoadedSelected ? 'Deselect all' : 'Select all'}
+                {selectingAll ? 'Selecting…' : allLoadedSelected ? 'Deselect all' : `Select all${total > images.length ? ` ${total.toLocaleString()}` : ''}`}
               </button>
             )}
             <Segmented
@@ -620,8 +668,8 @@ function ImageGridContent({
           <div className="flex h-64 flex-col items-center justify-center gap-1 text-center">
             <p className="font-medium">No images here</p>
             <p className="text-sm text-muted-foreground">
-              {source
-                ? 'Nothing matches this filter. Try a different source.'
+              {source || statusFilter
+                ? 'Nothing matches these filters. Try a different source or status.'
                 : 'Upload images or create some to start your library.'}
             </p>
           </div>
@@ -660,7 +708,7 @@ function ImageGridContent({
             <section ref={sheetRef} role="dialog" aria-modal="true" aria-label="Library actions" className="mobile-sheet absolute inset-x-0 bottom-0 max-h-[85dvh] overflow-y-auto rounded-t-2xl bg-background p-4 space-y-3" onClick={e => e.stopPropagation()}>
               <button className="min-h-10" onClick={() => setMobileMenu(null)}>Close</button>
               {mobileMenu === 'actions' ? <>{headerActions}{inspectorOverview}</> : <>
-                <button className="block min-h-12" onClick={selectAllLoaded}>Select all loaded</button>
+                <button className="block min-h-12" onClick={() => void selectAllMatching()}>Select all {total.toLocaleString()}</button>
                 {folderId && <button className="block min-h-12" disabled={!selectedIds.size} onClick={() => mobileTool('Remove from folder')}>Remove from this folder</button>}
                 {clusterId && <button className="block min-h-12" disabled={!selectedIds.size} onClick={() => mobileTool('Exclude from cluster')}>Exclude from cluster</button>}
               </>}
@@ -797,7 +845,7 @@ function ImageGridContent({
               }
               title={title}
               total={total}
-              images={toolImages ?? Array.from(selectedIds).map(id => images.find(image => image.id === id)).filter((image): image is Image => !!image)}
+              images={toolImages ?? Array.from(selectedIds).map(id => images.find(image => image.id === id) ?? selectedCache.get(id)).filter((image): image is Image => !!image)}
               tool={tool}
               onTool={(next) => {
                 setTool(next);
