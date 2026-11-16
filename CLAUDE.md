@@ -258,6 +258,16 @@ npm run build        # Production build
 npm run lint         # ESLint
 ```
 
+## Keeping Documentation Current
+
+**Documentation is part of every change.** When a change alters behavior, pages, API routes, models, environment variables, commands or the offered models, update the docs in the same PR. Don't leave it for later.
+
+- `README.md` is the public face of the repo (the app is live at https://sightlab.org). Keep it describing what users can do today; keep detailed reference out of it so it doesn't go stale.
+- `CLAUDE.md` holds the detailed architecture, routes, models, migrations and workflow. Update the affected section, including the migration count.
+- `docs/model-catalog.md` must match `backend/app/services/model_catalog.py`.
+- `docs/*-review.md` and `docs/payment-system-architecture.md` are point-in-time design reviews; don't rewrite them, but add a note at the top if they become misleading.
+- Before opening a PR, check the diff against these files and say in the PR description which docs were updated (or why none needed it).
+
 ## Issue Tracking
 
 **When you detect an issue, open a GitHub issue for it right away — don't ask first.** This covers bugs, broken pages, failing or stuck jobs, data inconsistencies, security or cost risks, and tech debt you find while working on something else. The goal is that nothing found in a session gets lost.
@@ -326,12 +336,15 @@ npm run lint         # ESLint
 - `clusters.py` — Cluster listing, detail, rename, pin, archive, merge, exclude image, summarize, recluster, export, cover composite generation/serving
 - `search.py` — Hybrid semantic+text search, tag filtering, tag listing
 - `jobs.py` — Job listing/detail/cancel/delete/retry, pipeline triggers (full, tag-all, describe-all, embed-all, reprocess-all, reprocess-failed, reprocess-selected), batch job image listing
-- `settings.py` — Prompt presets CRUD, activate preset, prompt get/update/reset/suggest, clustering config get/update/reset, API key management (store/validate/delete for openai/anthropic/fal/sentry, env var keys visible to admin only), Sentry DSN endpoint (public, no auth), provider config, generation config (per-base-model), training config (per-base-model), base model selection
-- `generation.py` — LoRA training (from folders or clusters, with optional per-image captions, multi-base-model: flux-dev/qwen-2.5), external LoRA upload (.safetensors → fal CDN + storage), image generation (supports up to 2 LoRAs per request via `loras` array, base models: flux-dev/qwen-2.5/nano-banana-pro), model/image CRUD, model recover/retry, LoRA weights download/management, LoRA evaluation (reference + creative pairs with embedding similarity/vision scoring), file serving (token via query param)
+- `settings.py` — Prompt presets CRUD, activate preset, prompt get/update/reset/suggest, clustering config get/update/reset, platform API key management (admin-only; store/validate/delete for openai/anthropic/fal/sentry), Sentry DSN endpoint (public, no auth), provider config, model catalog (`/model-catalog`), default base/edit model, generation/training/edit config
+- `generation.py` — LoRA training (from folders or clusters, with optional per-image captions, training bases FLUX.2 and Qwen Image 2512), external LoRA upload (.safetensors → fal CDN + storage), image generation (supports up to 2 LoRAs per request via `loras` array; generation models come from the catalog), model/image CRUD, model recover/retry, LoRA weights download/management, LoRA evaluation (reference + creative pairs with embedding similarity/vision scoring), file serving (token via query param)
 - `billing.py` — User balance, transaction history, usage summary, generation/vision cost estimates. Admin endpoints: user balance management, add credits, platform summary, billing logs (paginated with filters), cost catalog CRUD
-- `vision.py` — Vision analysis (tag/describe/custom modes) with source from existing images, generated images, or uploaded files. Persisted results with history listing. Providers: OpenAI, Anthropic, fal.ai (Grok-4-fast)
-- `edit.py` — Image editing via fal.ai with 6 edit models (qwen-image-max-edit, kling-image, wan-25, grok-imagine, face-swap, nano-banana-pro-edit). Source upload, model-specific parameters, batch output
+- `vision.py` — Vision analysis (tag/describe/custom modes) with source from existing images, generated images, or uploaded files. Persisted results with history listing. Models come from the language catalog (fal OpenRouter)
+- `edit.py` — Image editing via fal. Four jobs (describe the change, paint an area with a mask, arrange objects with boxes, keep a subject with Kling elements); which edit models can do each job comes from the catalog. Ordered sources (`ordered_sources`), source upload, model-specific parameters, batch output
 - `logs.py` — Pipeline log queries, stats (filtered by user), cleanup (admin-only)
+- `images.py` also serves image history (`/{id}/history`, "How it was made") and its saved input copies
+- `webhooks.py` — Lemon Squeezy payment webhooks (mounted outside `/api`)
+- `model_validation.py` — request-time checks that a model id is still in the catalog
 
 **Database models** (`backend/app/models/`): All data models have a `user_id` foreign key to the `users` table (NOT NULL with CASCADE delete, except `PipelineLog` which is nullable). Composite unique constraints replace simple uniques where needed (e.g., `user_id + file_hash` on images).
 - `User` — Authentication and data ownership. Fields: email (unique), hashed_password, display_name, role (admin/user), is_active, is_verified, sync_enabled, timestamps. Seed admin: stuart.leal23@gmail.com
@@ -344,16 +357,21 @@ npm run lint         # ESLint
 - `VisionResult` — Persisted vision analysis: mode (tag/describe/custom), provider, model, prompt_text, result_tags, result_text, duration_ms, source references (image_id, generated_id, or object_key)
 - `Job` — Async job tracking (types: INGEST, NORMALIZE, TAG, DESCRIBE, EMBED, CLUSTER, SUMMARIZE_CLUSTER, FULL_PIPELINE, REPROCESS, BATCH_REPROCESS, LORA_TRAIN, GENERATE_IMAGE, BATCH_GENERATE, LORA_EVALUATE, FOLDER_DELETE, EDIT_IMAGE, BATCH_EDIT, BATCH_DESCRIBE). `charged_cost` column tracks job billing in sparks
 - `Folder` + `FolderImage` — User folders for organizing images (many-to-many), cover_image_id + cover_thumbnail_uri
-- `LoraModel` — LoRA adapters: either trained via fal.ai (linked to folder/cluster source) or uploaded externally (.safetensors). Statuses: PENDING, TRAINING, COMPLETED, FAILED, ARCHIVED, UPLOADED. `trigger_word` is optional (nullable). Supports multiple base models (flux-dev, qwen-2.5)
+- `LoraModel` — LoRA adapters: either trained via fal.ai (linked to folder/cluster source) or uploaded externally (.safetensors). Statuses: PENDING, TRAINING, COMPLETED, FAILED, ARCHIVED, UPLOADED. `trigger_word` is optional (nullable). Training bases: FLUX.2 and Qwen Image 2512 (older flux-dev/qwen-2.5 rows keep their raw keys)
 - `GeneratedImage` — AI-generated images linked to LoRA models with prompt, params, and output files. Multi-LoRA config stored in `generation_params` JSON column (`loras` array); `lora_model_id`/`lora_scale` columns kept for backward compat (set to first LoRA)
 - `LoraEvaluation` + `EvaluationPair` — Quality evaluation of trained LoRA models. Generates images from source prompts, compares against originals via embedding similarity and vision scoring. Supports "reference" (vs original) and "creative" (novel prompt) pair types
 - `PromptPreset` — Named tag+description prompt pairs with active/default flag
 - `PipelineLog` — Structured logs (category, level, tokens, duration, provider/model). user_id is nullable (system-level logs)
 - `AppSetting` — Key-value config store
+- `ImageHistoryLink` — Which library images were made from which inputs (image history, "How it was made"). `history_cleanup.py` holds post-commit hooks that delete saved input copies once nothing uses them
+- `CostDecision` — Billing decision persisted before each provider call
+- `payment.py` — `SparkPack`, `PaymentTransaction`, `PaymentWebhookEvent`, `SubscriptionPlan`, `UserSubscription`, `PromoCode`, `PromoRedemption`
 - `APIKey` — Encrypted API key storage with validation status
 
 **Frontend structure** (`frontend/src/`):
-- Pages: Login (sign-in/sign-up toggle), Home (clusters), Folders, Folder Detail, All Images, Upload, Search, Cluster Detail, Models (with sub-components: TrainModal, FluxTrainForm, QwenTrainForm, SharedTrainFields, ModelSettings, EvaluationDetail, UploadLoraModal), Model Evaluate, Evaluation Detail, Generate, Vision (AI image analysis), Edit (image editing with 6 models), Billing (user balance/usage/transactions), Admin (platform billing, cost catalog, billing logs, system management), Jobs, Debug, Settings
+- Pages: Home (public marketing page), Login, Pricing, Terms, Privacy, Library (`/images`, all images; `/images/all` and `/images/folder/[id]`), Folders, Clusters + Cluster Detail, Upload, Search, My models (`/models`, plus evaluate and evaluation detail), Create (`/generate`), Edit (`/edit`, four jobs), Vision, Jobs, Billing, Notifications, Settings, Admin, Debug. Phone hubs: Collection, Studio, Account (`MobileHub`)
+- Tools: Create, Edit and Vision share the Stage layout in `components/tools/` (Stage, JobTabs, SourceTray, Composer, ModelPanel, PaintCanvas, BoxCanvas, SubjectStage, Notice). Image history shows in `ImageHistoryPanel` ("How it was made")
+- Notifications: `contexts/NotificationContext.tsx` holds per-user notification preferences.
 - Auth: `contexts/AuthContext.tsx` provides `login`, `register`, `logout`, `user`, `isAuthenticated`. `AuthGate` in layout redirects unauthenticated users to `/login`. Axios interceptors attach Bearer token to all requests and handle 401 with automatic token refresh.
 - Upload: `contexts/UploadContext.tsx` provides global `startUpload(files, folderId?, newFolderName?)` and `state` (isUploading, progress). Lives in layout — persists across navigation. Manages chunked upload lifecycle with real-time progress toast.
 - Theme: `contexts/ThemeContext.tsx` provides light/dark/auto theme switching with timezone-aware auto mode (dark 19:00-07:00). Persisted in localStorage.
@@ -362,7 +380,7 @@ npm run lint         # ESLint
 - Observability: `lib/sentry.ts` (lazy Sentry init from backend DSN), `app/error.tsx` (route-level error boundary), `app/global-error.tsx` (root error boundary)
 - State: TanStack Query with polling (5s jobs, 3s logs, 10s stats)
 
-**Alembic migrations:** 33 versions (001-033) covering initial schema through billing, vision, and editing features. Key migrations: 017 creates users table + multi-user backfill. 018 adds sync_enabled. 021 fixes enum casing. 022 adds FOLDER_DELETE job type. 023-024 add cover image composites. 025 makes trigger_word nullable. 026 adds EDIT_IMAGE/BATCH_EDIT job types. 027 creates vision_results table. 028 adds metadata prompt/timing columns. 029 creates billing tables (cost_catalog, usage_records, user_balance, balance_transactions) with initial pricing seed. 030 fixes nano-banana-pro pricing + adds jobs.charged_cost. 031-032 add expand_prompt and GPT-5 pricing. 033 adds usage_records.detail JSON column for cost breakdowns.
+**Alembic migrations:** 57 versions (001-057) in `backend/migrations/versions/`. Later highlights: 043-051 cost decisions and integer/fractional sparks, 052-053 payments, subscriptions and promos, 054-055 model catalog refresh, 056 generated images join the library, 057 image history. Earlier ones: Key migrations: 017 creates users table + multi-user backfill. 018 adds sync_enabled. 021 fixes enum casing. 022 adds FOLDER_DELETE job type. 023-024 add cover image composites. 025 makes trigger_word nullable. 026 adds EDIT_IMAGE/BATCH_EDIT job types. 027 creates vision_results table. 028 adds metadata prompt/timing columns. 029 creates billing tables (cost_catalog, usage_records, user_balance, balance_transactions) with initial pricing seed. 030 fixes nano-banana-pro pricing + adds jobs.charged_cost. 031-032 add expand_prompt and GPT-5 pricing. 033 adds usage_records.detail JSON column for cost breakdowns.
 
 ## Observability
 
@@ -383,16 +401,15 @@ npm run lint         # ESLint
 - **Public endpoints**: `POST /auth/login`, `POST /auth/register` (no auth required)
 - **Sign-up**: Open registration via `/auth/register`. New users get the `user` role. Only admins can create other admins via `POST /auth/users`.
 - **File serving**: Thumbnail/image endpoints accept token via `?token=` query parameter (required for `<img src>` tags which can't send Authorization headers)
-- **API key isolation**: Each user manages their own API keys. Server-level env var keys are only visible to admin users.
+- **API keys**: Platform API keys are managed by admins only (Admin page). Env var keys act as fallback.
 
 ## Environment
 
 ### Local (`.env` in project root)
-- `OPENAI_API_KEY` (required for embeddings; also used for vision if chosen — visible as fallback to admin only)
-- `ANTHROPIC_API_KEY` (optional, for vision/summarization — visible as fallback to admin only)
-- `FAL_API_KEY` (optional, for LoRA training and image generation via fal.ai — visible as fallback to admin only)
-- `DEFAULT_VISION_PROVIDER` (openai/anthropic)
+- `FAL_API_KEY` (required: language and vision via fal OpenRouter, image generation, editing, training)
+- `OPENAI_API_KEY` (required for embeddings)
 - `DEFAULT_EMBEDDING_PROVIDER` (openai — currently only openai is implemented)
+- `SIGNUP_BONUS_SPARKS` (default 500), `GOOGLE_CLIENT_ID` (Google sign-in), `PAYPAL_ME_URL` / Lemon Squeezy settings (payments)
 - `DATABASE_URL`, `REDIS_URL`, `CELERY_BROKER_URL`
 - `JWT_SECRET_KEY` (defaults to `change-me-in-production-jwt-secret` — **must override in production**)
 
