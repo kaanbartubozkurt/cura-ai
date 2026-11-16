@@ -14,9 +14,13 @@ import Stage from '@/components/tools/Stage';
 import SheetButton from '@/components/tools/SheetButton';
 import Composer from '@/components/tools/Composer';
 import Notice from '@/components/tools/Notice';
+import { AppendOnlyGrid, Segmented } from '@/components/ImageGrid';
+import { useAuth } from '@/contexts/AuthContext';
+import type { CreateChoices } from '@/lib/api';
 import type { GeneratedImage } from '@/types';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { Slider } from '@/components/Slider';
+import { formatDate, parseUTC } from '@/lib/utils';
 
 export default function GeneratePage() {
   return (
@@ -29,7 +33,6 @@ export default function GeneratePage() {
 function GeneratePageInner() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
-  const dirty = useRef(new Set<string>());
   const [references, setReferences] = useState<Array<{ id: number; url: string }>>([]);
 
   useEffect(() => {
@@ -75,45 +78,100 @@ function GeneratePageInner() {
   const BASE_MODELS = useMemo(() => (catalog?.generation ?? []).map(m => ({ value: m.key, label: m.label, defaultGuidance: m.params.steps_guidance?.guidance?.default ?? 0, hasLora: m.supports_lora, hasStepsGuidance: !!m.params.steps_guidance, hasWidthHeight: false, usesResolutionAspect: !!(m.params.resolution || m.params.aspect_ratio), hasSafetyTolerance: !!m.params.safety_tolerance, hasWebSearch: !!m.params.enable_web_search, hasImageSizePreset: !!m.params.image_size, hasNegativePrompt: !!m.params.negative_prompt, maxSafetyLevel: 6, maxImages: m.max_num_images || 1 })), [catalog]);
   const modelCaps = BASE_MODELS.find(m => m.value === baseModel) ?? { hasLora: false, hasStepsGuidance: false, hasWidthHeight: false, usesResolutionAspect: false, hasSafetyTolerance: false, hasWebSearch: false, hasImageSizePreset: false, hasNegativePrompt: false, maxSafetyLevel: 6, maxImages: 1 };
   const model = catalog?.generation.find(m => m.key === baseModel);
-  const spec = model?.params ?? {};
+  const spec = useMemo(() => model?.params ?? {}, [model]);
   const RESOLUTIONS = (spec.resolution?.options ?? []).map(value => ({ value, label: value }));
   const ASPECT_RATIOS = (spec.aspect_ratio?.options ?? []).map(value => ({ value, label: value }));
   const SAFETY_LEVELS = (spec.safety_tolerance?.options ?? []).map(value => ({ value, label: value, level: Number(value) }));
   const IMAGE_SIZE_PRESETS = [...(spec.image_size?.options ?? []), ...(spec.image_size?.custom_size ? ['custom'] : [])].map(value => ({ value, label: value.replaceAll('_', ' '), ratio: '1:1' }));
-  // Model changes preserve supported values and report any adjustments below.
+  // Restore only choices supported by the current catalog.
 
-  const initializedModel = useRef('');
-  useEffect(() => {
-    if (!model || initializedModel.current === model.key) return;
-    initializedModel.current = model.key;
-    setResolution(model.params.resolution?.default ?? '');
-    setAspectRatio(model.params.aspect_ratio?.default ?? '');
-    setImageSizePreset(model.params.image_size?.default ?? '');
-    setQuality(model.params.quality?.default ?? '');
-    setSafetyTolerance(model.params.safety_tolerance?.default ?? '');
-    setSteps(model.params.steps_guidance?.steps?.default ?? 28);
-    setGuidance(model.params.steps_guidance?.guidance?.default ?? 0);
-  }, [model]);
-
-  const { data: generationConfig } = useQuery({
-    queryKey: ['generation-config', baseModel],
-    queryFn: () => settingsApi.getGenerationConfig(baseModel),
-    enabled: !!model,
+  const { user } = useAuth();
+  const { data: savedChoices } = useQuery({
+    queryKey: ['create-choices', user?.id],
+    queryFn: settingsApi.getCreateChoices,
+    enabled: !!user,
+    staleTime: Infinity,
   });
-  const configuredModel = useRef('');
+  const choices = useRef<Record<string, CreateChoices>>({});
+  const initializedModel = useRef('');
+  const appliedChoices = useRef('');
   useEffect(() => {
-    if (!generationConfig || !model || configuredModel.current) return;
-    configuredModel.current = model.key;
-    if (model.params.image_size?.custom_size) {
-      setWidth(generationConfig.width);
-      setHeight(generationConfig.height);
+    if (savedChoices) choices.current = savedChoices;
+  }, [savedChoices]);
+  useEffect(() => {
+    if (!model || !savedChoices || initializedModel.current === model.key) return;
+    const saved = choices.current[model.key] ?? {};
+    const dropped: string[] = [];
+    const previous = choices.current[initializedModel.current];
+    if (previous && !choices.current[model.key]) {
+      for (const [key, value] of Object.entries(previous)) {
+        const param = model.params[key];
+        if (['resolution', 'aspect_ratio', 'image_size', 'quality', 'safety_tolerance'].includes(key)
+          && !(param?.options?.includes(String(value)) || (value === 'custom' && param?.custom_size))) {
+          dropped.push(key.replaceAll('_', ' '));
+        }
+      }
     }
-    const bounds = model.params.steps_guidance;
-    if (bounds?.steps && bounds.guidance) {
-      setSteps(Math.max(bounds.steps.minimum, Math.min(bounds.steps.maximum, generationConfig.num_inference_steps)));
-      setGuidance(Math.max(bounds.guidance.minimum, Math.min(bounds.guidance.maximum, generationConfig.guidance_scale)));
+    for (const key of Object.keys(saved)) {
+      if (!['num_images', 'auto_expand', 'steps', 'guidance', 'width', 'height'].includes(key) && !model.params[key]) {
+        dropped.push(key.replaceAll('_', ' '));
+      }
     }
-  }, [generationConfig, model]);
+    const option = (key: string) => {
+      const param = model.params[key];
+      const value = saved[key];
+      if (typeof value === 'string' && (param?.options?.includes(value) || (value === 'custom' && param?.custom_size))) return value;
+      if (value !== undefined) dropped.push(key.replaceAll('_', ' '));
+      return param?.default ?? '';
+    };
+    setResolution(option('resolution'));
+    setAspectRatio(option('aspect_ratio'));
+    setImageSizePreset(option('image_size'));
+    setQuality(option('quality'));
+    setSafetyTolerance(option('safety_tolerance'));
+    const bound = (key: 'steps' | 'guidance') => {
+      const bounds = model.params.steps_guidance?.[key];
+      const value = saved[key];
+      const result = bounds ? Math.max(bounds.minimum, Math.min(bounds.maximum, typeof value === 'number' ? value : bounds.default)) : 0;
+      if (value !== undefined && value !== result) dropped.push(key);
+      return result;
+    };
+    setSteps(bound('steps'));
+    setGuidance(bound('guidance'));
+    const count = typeof saved.num_images === 'number' ? Math.max(1, Math.min(model.max_num_images, Math.floor(saved.num_images))) : 1;
+    if (saved.num_images !== undefined && count !== saved.num_images) dropped.push('results');
+    setNumImages(count);
+    setWidth(typeof saved.width === 'number' ? Math.max(256, Math.min(2048, saved.width)) : 1024);
+    setHeight(typeof saved.height === 'number' ? Math.max(256, Math.min(2048, saved.height)) : 1024);
+    setEnableWebSearch(!!model.params.enable_web_search && saved.enable_web_search === true);
+    setNegativePrompt(model.params.negative_prompt && typeof saved.negative_prompt === 'string' ? saved.negative_prompt : '');
+    setAutoExpand(saved.auto_expand === true);
+    setNotice(dropped.length ? `Unsupported saved choices adjusted: ${dropped.join(', ')}.` : '');
+    initializedModel.current = model.key;
+    appliedChoices.current = '';
+  }, [model, savedChoices]);
+  const currentChoices = useMemo<CreateChoices>(() => ({
+    ...(spec.resolution ? { resolution } : {}),
+    ...(spec.aspect_ratio ? { aspect_ratio: aspectRatio } : {}),
+    ...(spec.image_size ? { image_size: imageSizePreset, ...(spec.image_size.custom_size ? { width, height } : {}) } : {}),
+    ...(spec.quality ? { quality } : {}),
+    ...(spec.safety_tolerance ? { safety_tolerance: safetyTolerance } : {}),
+    ...(spec.steps_guidance ? { steps, guidance } : {}),
+    ...(spec.enable_web_search ? { enable_web_search: enableWebSearch } : {}),
+    ...(spec.negative_prompt ? { negative_prompt: negativePrompt } : {}),
+    num_images: numImages, auto_expand: autoExpand,
+  }), [spec, resolution, aspectRatio, imageSizePreset, width, height, quality, safetyTolerance, steps, guidance, enableWebSearch, negativePrompt, numImages, autoExpand]);
+  useEffect(() => {
+    if (!baseModel || !savedChoices || initializedModel.current !== baseModel) return;
+    // The first render after changing models still contains the old form values.
+    if (appliedChoices.current !== baseModel) { appliedChoices.current = baseModel; return; }
+    choices.current[baseModel] = currentChoices;
+    const timer = setTimeout(() => {
+      settingsApi.putCreateChoices(baseModel, currentChoices).catch(() => setNotice('Could not save model settings.'));
+      settingsApi.updateBaseModel(baseModel).catch(() => setNotice('Could not save the last model.'));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [baseModel, currentChoices, savedChoices]);
 
   // Multi-LoRA helpers
   const addLora = () => {
@@ -214,7 +272,7 @@ function GeneratePageInner() {
   // Fetch generated images with polling
   const { data: generatedImages, isLoading: imagesLoading } = useQuery({
     queryKey: ['generated-images'],
-    queryFn: () => generationApi.listImages({ limit: 100 }),
+    queryFn: () => generationApi.listImages({ limit: 100, mode: 'generate' }),
     // Poll only while a result is on its way; starting a run invalidates this query.
     refetchInterval: query => query.state.data?.items.some(image => image.status === 'pending' || image.status === 'generating') ? 3000 : false,
   });
@@ -347,14 +405,14 @@ function GeneratePageInner() {
     return params;
   };
 
-  const handleGenerate = async () => {
-    if (!model) { toast.error('Model catalog is not ready'); return; }
-    if (!prompt.trim()) {
+  const handleGenerate = async (retry?: { prompt: string; count: number }) => {
+    if (!model || !savedChoices || initializedModel.current !== model.key) { toast.error('Model settings are not ready'); return; }
+    if (!(retry?.prompt ?? prompt).trim()) {
       toast.error('Please enter a prompt');
       return;
     }
 
-    let finalPrompt = prompt.trim();
+    let finalPrompt = (retry?.prompt ?? prompt).trim();
     setIsGenerating(true);
 
     if (autoExpand) {
@@ -369,7 +427,7 @@ function GeneratePageInner() {
       }
     }
 
-    generateMutation.mutate(buildGenerateParams(finalPrompt), {
+    generateMutation.mutate({ ...buildGenerateParams(finalPrompt), ...(retry ? { num_images: Math.min(retry.count, modelCaps.maxImages) } : {}) }, {
       onSettled: () => setIsGenerating(false),
     });
   };
@@ -378,59 +436,30 @@ function GeneratePageInner() {
     if (key === baseModel) return;
     const next = catalog?.generation.find(entry => entry.key === key);
     if (!next) return;
-    const changes: string[] = [];
-    const options = [
-      ['Resolution', resolution, setResolution, next.params.resolution],
-      ['Shape', aspectRatio, setAspectRatio, next.params.aspect_ratio],
-      ['Image size', imageSizePreset, setImageSizePreset, next.params.image_size],
-      ['Quality', quality, setQuality, next.params.quality],
-      ['Safety tolerance', safetyTolerance, setSafetyTolerance, next.params.safety_tolerance],
-    ] as const;
-    for (const [label, value, setter, param] of options) {
-      const supported = param?.options?.includes(value) || (value === 'custom' && param?.custom_size);
-      const replacement = supported ? value : param?.default ?? '';
-      if (value !== replacement && value && dirty.current.has(label)) changes.push(`${label} ${replacement ? `changed to ${replacement}` : 'removed'}`);
-      if (replacement !== value) dirty.current.delete(label);
-      setter(replacement);
-    }
-    if (loraSelections.length) {
-      setLoraSelections([]);
-      changes.push('LoRAs removed because they belong to the previous model');
-    }
-    if (!next.params.negative_prompt && negativePrompt) {
-      setNegativePrompt('');
-      changes.push('Negative prompt removed');
-    }
-    if (!next.params.seed && seed) {
-      setSeed('');
-      changes.push('Seed removed');
-    }
-    if (!next.params.enable_web_search && enableWebSearch) {
-      setEnableWebSearch(false);
-      changes.push('Web search disabled');
-    }
-    const bounds = next.params.steps_guidance;
-    for (const [label, value, setter, bound] of [
-      ['Steps', steps, setSteps, bounds?.steps],
-      ['Guidance', guidance, setGuidance, bounds?.guidance],
-    ] as const) {
-      const replacement = bound ? (spec.steps_guidance ? Math.max(bound.minimum, Math.min(bound.maximum, value)) : bound.default) : 0;
-      if (dirty.current.has(label) && replacement !== value) changes.push(`${label} ${bound ? `changed to ${replacement}` : 'removed'}`);
-      if (replacement !== value) dirty.current.delete(label);
-      setter(replacement);
-    }
-    if (numImages > next.max_num_images) {
-      setNumImages(next.max_num_images);
-      changes.push(`Results changed to ${next.max_num_images}`);
-    }
-    setNotice(changes.join('. '));
-    initializedModel.current = key;
+    choices.current[baseModel] = currentChoices;
+    // Flush the outgoing model so switching within the debounce window cannot lose choices.
+    settingsApi.putCreateChoices(baseModel, currentChoices).catch(() => setNotice('Could not save model settings.'));
+    settingsApi.updateBaseModel(key).catch(() => setNotice('Could not save the last model.'));
+    setLoraSelections([]);
     setBaseModel(key);
   }
 
-  const images = generatedImages?.items || [];
+  const [retryRun, setRetryRun] = useState<{ prompt: string; count: number } | null>(null);
+  useEffect(() => {
+    if (!retryRun || initializedModel.current !== baseModel) return;
+    const timer = setTimeout(() => {
+      setRetryRun(null);
+      void handleGenerate(retryRun);
+    }, 0);
+    return () => clearTimeout(timer);
+  });
+
+  const images = useMemo(() => (generatedImages?.items || [])
+    .filter(image => image.generation_params?.mode !== 'edit')
+    .sort((a, b) => parseUTC(b.created_at).getTime() - parseUTC(a.created_at).getTime() || b.id - a.id), [generatedImages]);
+  const completed = useMemo(() => images.filter(image => image.status === 'completed'), [images]);
   const selectedImage = selectedImageId != null
-    ? images.find((img) => img.id === selectedImageId) ?? linkedImage ?? null
+    ? images.find((img) => img.id === selectedImageId) ?? (linkedImage?.generation_params?.mode !== 'edit' ? linkedImage : null) ?? null
     : null;
 
   const runs = new Map<string, GeneratedImage[]>();
@@ -438,27 +467,105 @@ function GeneratePageInner() {
     const key = image.job_id != null ? `job-${image.job_id}` : `image-${image.id}`;
     runs.set(key, [...(runs.get(key) ?? []), image]);
   }
+  const [density, setDensity] = useState<'S' | 'M' | 'L'>('M');
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      const value = localStorage.getItem('library-density');
+      if (value === 'S' || value === 'M' || value === 'L') setDensity(value);
+      const stored: unknown = JSON.parse(localStorage.getItem(`create-dismissed:${user?.id}`) || '[]');
+      setDismissed(Array.isArray(stored) ? stored.filter((key): key is string => typeof key === 'string') : []);
+    } catch { /* Browser storage is optional. */ }
+  }, [user?.id]);
+  function dismiss(key: string) {
+    const next = [...dismissed, key];
+    setDismissed(next);
+    try { localStorage.setItem(`create-dismissed:${user?.id}`, JSON.stringify(next)); } catch { /* Browser storage is optional. */ }
+  }
+  const labelFor = (key: string) => catalog?.generation.find(entry => entry.key === key)?.label || key;
+  function failure(run: GeneratedImage[]) {
+    const failed = run.filter(image => image.status === 'failed' && !/cancelled|canceled/i.test(image.error_message || ''));
+    const first = failed[0] ?? run[0];
+    const policy = failed.some(image => /content_policy_violation|content checker/i.test(image.error_message || ''));
+    const timeout = failed.some(image => /timeout|timed out|lease expired/i.test(image.error_message || ''));
+    const free = failed.every(image => !image.cost_sparks);
+    const label = labelFor(first.base_model);
+    const partial = failed.length < run.length;
+    const title = partial ? `${failed.length} of ${run.length} results didn't finish.` : policy ? `${label} declined this prompt.` : timeout ? `${label} didn't finish in time.` : `${label} couldn't make this image.`;
+    let body: string;
+    if (policy) {
+      body = `${label}'s content check flagged the prompt.`;
+      if (!partial) body += ` Nothing was made${free ? ' and no sparks were charged' : ''}.`;
+      body += ' Other models apply different rules, so the same prompt may work elsewhere.';
+    } else if (timeout) {
+      body = `${partial ? `${label} didn't finish in time. ` : ''}${free ? "It wasn't charged. " : ''}Trying again usually works.`;
+    } else {
+      body = partial ? `${label} couldn't finish the request.${free ? ' Nothing was charged.' : ''}` : free ? 'Nothing was charged.' : '';
+    }
+    return { failed, first, policy, partial, title, body };
+  }
+  const selectedFailure = selectedImage ? failure(
+    selectedImage.job_id != null ? runs.get(`job-${selectedImage.job_id}`) ?? [selectedImage] : [selectedImage]
+  ) : null;
+  useEffect(() => {
+    if (selectedImageId == null) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.getElementById('create-viewer-close')?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedImageId(null);
+      if (event.key === 'Tab') {
+        const controls = Array.from(document.querySelectorAll<HTMLElement>('[data-create-viewer] button, [data-create-viewer] a, [data-create-viewer] summary'));
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+      const index = completed.findIndex(image => image.id === selectedImageId);
+      const next = event.key === 'ArrowLeft' ? index - 1 : event.key === 'ArrowRight' ? index + 1 : -1;
+      if (index >= 0 && completed[next]) { event.preventDefault(); setSelectedImageId(completed[next].id); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = overflow; window.removeEventListener('keydown', onKey); previous?.focus(); };
+  }, [selectedImageId, completed]);
   const chipClass = 'min-w-0 max-w-full rounded-md border border-input bg-background px-2 py-1 text-xs';
   const modelControl = (
-    <select aria-label="Model" value={baseModel} onChange={event => changeModel(event.target.value)} className={chipClass}>
+    <select aria-label="Model" disabled={!savedChoices} value={baseModel} onChange={event => changeModel(event.target.value)} className={chipClass}>
       {BASE_MODELS.map(entry => (
         <option key={entry.value} value={entry.value}>{entry.label}</option>
       ))}
     </select>
   );
-  const shapeControl = (spec.aspect_ratio ? (
-    <select aria-label="Shape" value={aspectRatio} onChange={event => { dirty.current.add('Shape'); setAspectRatio(event.target.value); }} className={chipClass}>
+  const shapeSelect = (spec.aspect_ratio ? (
+    <select aria-label="Shape" value={aspectRatio} onChange={event => { setAspectRatio(event.target.value); }} className={chipClass}>
       {ASPECT_RATIOS.map(option => (
         <option key={option.value}>{option.value}</option>
       ))}
     </select>
   ) : spec.image_size ? (
-    <select aria-label="Shape" value={imageSizePreset} onChange={event => { dirty.current.add('Image size'); setImageSizePreset(event.target.value); }} className={chipClass}>
+    <select aria-label="Shape" value={imageSizePreset} onChange={event => { setImageSizePreset(event.target.value); }} className={chipClass}>
       {IMAGE_SIZE_PRESETS.map(option => (
         <option key={option.value} value={option.value}>{option.label}</option>
       ))}
     </select>
   ) : <span className={chipClass}>{width} × {height}</span>);
+  const shapeControl = (
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
+      {shapeSelect}
+      {spec.image_size?.custom_size && imageSizePreset === 'custom' && (
+        <>
+          <input aria-label="Width" type="number" min={256} max={2048} step={8} value={width}
+            onChange={event => setWidth(Math.max(256, Math.min(2048, Number(event.target.value))))}
+            className={`${chipClass} w-20`} />
+          <span>×</span>
+          <input aria-label="Height" type="number" min={256} max={2048} step={8} value={height}
+            onChange={event => setHeight(Math.max(256, Math.min(2048, Number(event.target.value))))}
+            className={`${chipClass} w-20`} />
+        </>
+      )}
+    </span>
+  );
   const countControl = (
     <select aria-label="Results" value={numImages} onChange={event => setNumImages(Number(event.target.value))} className={chipClass}>
       {Array.from({ length: modelCaps.maxImages }, (_, index) => index + 1).map(count => (
@@ -467,17 +574,19 @@ function GeneratePageInner() {
     </select>
   );
   const qualityControl = spec.quality ? (
-    <select aria-label="Quality" value={quality} onChange={event => { dirty.current.add('Quality'); setQuality(event.target.value); }} className={chipClass}>
+    <select aria-label="Quality" value={quality} onChange={event => { setQuality(event.target.value); }} className={chipClass}>
       {spec.quality.options?.map(value => <option key={value}>{value}</option>)}
     </select>
   ) : spec.resolution ? (
-    <select aria-label="Resolution" value={resolution} onChange={event => { dirty.current.add('Resolution'); setResolution(event.target.value); }} className={chipClass}>
+    <select aria-label="Resolution" value={resolution} onChange={event => { setResolution(event.target.value); }} className={chipClass}>
       {RESOLUTIONS.map(option => (
         <option key={option.value}>{option.value}</option>
       ))}
     </select>
-  ) : null;
+  ) : <span className={chipClass}>Standard resolution</span>;
 
+  const gridItems = [...images.filter(image => image.status === 'pending' || image.status === 'generating'), ...completed]
+    .map(image => image.width && image.height ? image : { ...image, ...shapeSize(image) });
   return (
     <div className="-mx-5 -my-5 h-[calc(100%+40px)] min-h-0">
       <style jsx global>{`
@@ -501,39 +610,89 @@ function GeneratePageInner() {
               </div>
             )}
             {imagesLoading && <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />}
-            {Array.from(runs, ([key, run], index) => {
-              const first = run[0];
-              const params = first.generation_params;
-              const shape = String(params?.aspect_ratio || params?.image_size || `${first.width ?? '?'} × ${first.height ?? '?'}`);
-              const cost = run.reduce((sum, image) => sum + (image.cost_sparks ?? 0), 0);
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-muted-foreground">{completed.length} images you made · Newest first</span>
+              <Segmented label="Image size" options={(['S', 'M', 'L'] as const).map(key => ({ key, label: key }))} value={density} onChange={value => {
+                setDensity(value);
+                try { localStorage.setItem('library-density', value); } catch { /* Browser storage is optional. */ }
+              }} />
+            </div>
+            {Array.from(runs, ([key, run]) => {
+              const info = failure(run);
+              if (!info.failed.length || dismissed.includes(key)) return null;
+              const { first, partial, policy, title, body, failed } = info;
+              const retry = (modelKey: string) => {
+                changeModel(modelKey);
+                setRetryRun({ prompt: first.prompt, count: failed.length });
+              };
               return (
-                <section key={key} style={{ '--mobile-run-order': runs.size - index } as React.CSSProperties} className="create-run shrink-0 space-y-2">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2 text-[13px]">
-                    <span className="min-w-0 flex-1 truncate font-medium" title={first.prompt}>{first.prompt}</span>
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {catalog?.generation.find(entry => entry.key === first.base_model)?.label || first.base_model} · {shape} · {run.some(image => image.cost_sparks != null) ? `${cost} sparks` : 'Cost pending'}
-                    </span>
-                  </div>
-                  <div className="flex h-[210px] gap-1.5 overflow-x-auto">
-                    {run.map(image => (
-                      <button
-                        key={image.id}
-                        aria-label={`Open result ${image.id}`}
-                        onClick={() => setSelectedImageId(image.id)}
-                        style={{ aspectRatio: `${image.width || 1024} / ${image.height || 1024}` }}
-                        className="relative h-full shrink-0 overflow-hidden rounded-md bg-muted"
-                      >
-                        {image.status === 'completed' && image.object_key ? (
-                          <LibraryImage src={generationApi.getImageUrl(image.id)} alt={image.prompt} className="h-full w-full object-contain" />
-                        ) : image.status === 'failed' ? (
-                          <span className="block max-w-64 p-3 text-sm text-destructive">{image.error_message || 'Generation failed'}</span>
-                        ) : <span className="block h-full w-full bg-[linear-gradient(100deg,transparent_20%,hsl(var(--muted-foreground)/0.12)_45%,transparent_70%)] bg-[length:220%_100%] motion-safe:animate-[create-shimmer_1.4s_linear_infinite]" />}
-                      </button>
-                    ))}
+                <section key={key} role="status" className="relative shrink-0 rounded-md border border-danger/20 border-l-[3px] border-l-danger bg-danger/5 p-4 pr-10 text-sm">
+                  <button
+                    aria-label="Dismiss notice"
+                    onClick={() => dismiss(key)}
+                    className="absolute right-3 top-3"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                  <h3 className="font-semibold">{title}</h3>
+                  <p className="mt-1 text-muted-foreground">{body}</p>
+                  <p className="my-2 text-xs text-muted-foreground">“{first.prompt.slice(0, 90)}{first.prompt.length > 90 ? '…' : ''}” · {relativeTime(first.created_at)}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {partial ? (
+                      <button className="rounded-md border border-foreground bg-foreground px-2.5 py-1 text-xs font-medium text-background hover:opacity-90" onClick={() => retry(first.base_model)}>Make {failed.length} more</button>
+                    ) : policy ? (
+                      <>
+                        {catalog && first.base_model !== catalog.defaults.generation_model && (
+                          <button className="rounded-md border border-foreground bg-foreground px-2.5 py-1 text-xs font-medium text-background hover:opacity-90" onClick={() => retry(catalog.defaults.generation_model)}>
+                            Try with {labelFor(catalog.defaults.generation_model)}
+                          </button>
+                        )}
+                        <button className="rounded-md border border-input bg-background px-2.5 py-1 text-xs font-medium hover:bg-accent" onClick={() => {
+                          changeModel(first.base_model);
+                          setPrompt(first.prompt);
+                          document.querySelector<HTMLTextAreaElement>('.tool-composer textarea')?.focus();
+                        }}>
+                          Edit prompt
+                        </button>
+                      </>
+                    ) : (
+                      <button className="rounded-md border border-foreground bg-foreground px-2.5 py-1 text-xs font-medium text-background hover:opacity-90" onClick={() => retry(first.base_model)}>Try again</button>
+                    )}
+                    <button className="rounded-md border border-input bg-background px-2.5 py-1 text-xs font-medium hover:bg-accent" onClick={() => setSelectedImageId(first.id)}>Details</button>
                   </div>
                 </section>
               );
             })}
+            <div className="shrink-0">
+              <AppendOnlyGrid images={gridItems} density={density}>
+                {(image) => (
+                  <button
+                    aria-label={`Open image ${image.id}`}
+                    disabled={image.status !== 'completed'}
+                    onClick={() => setSelectedImageId(image.id)}
+                    className="create-run group relative block h-full w-full overflow-hidden rounded-md bg-muted"
+                  >
+                    {image.status === 'completed' ? (
+                      <>
+                        <LibraryImage
+                          src={image.thumbnail_uri_medium || image.thumbnail_uri_small
+                            ? generationApi.getThumbnailUrl((image.thumbnail_uri_medium || image.thumbnail_uri_small)!.split('/').pop()!)
+                            : generationApi.getImageUrl(image.id)}
+                          alt={image.prompt}
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
+                        <span className="absolute bottom-2 left-2 rounded bg-black/45 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-white backdrop-blur">
+                          Generated
+                        </span>
+                      </>
+                    ) : (
+                      <span className="block h-full w-full bg-[linear-gradient(100deg,transparent_20%,hsl(var(--muted-foreground)/0.12)_45%,transparent_70%)] bg-[length:220%_100%] motion-safe:animate-[create-shimmer_1.4s_linear_infinite]" />
+                    )}
+                  </button>
+                )}
+              </AppendOnlyGrid>
+            </div>
           </>
         }
         composer={
@@ -541,7 +700,7 @@ function GeneratePageInner() {
             value={prompt}
             onChange={setPrompt}
             onApply={handleGenerate}
-            disabled={!model || isGenerating || !prompt.trim()}
+            disabled={!model || !savedChoices || isGenerating || !prompt.trim()}
             count={numImages}
             cost={totalEstimatedCost ?? undefined}
             placeholder="Describe the image you want to create…"
@@ -552,12 +711,15 @@ function GeneratePageInner() {
         }
         settings={
           <>
-            <h2 className="font-semibold">Create settings</h2>
+            <h2 className="font-semibold">Advanced for {model?.label}</h2>
+            <p className="text-xs text-muted-foreground">SightLab remembers what you pick for each model.</p>
             <Notice>{notice}</Notice>
-            <label className="grid gap-1">Model{modelControl}</label>
-            <label className="grid gap-1">Shape{shapeControl}</label>
-            <label className="grid gap-1">Results{countControl}</label>
-            {qualityControl && <label className="grid gap-1">{spec.quality ? 'Quality' : 'Resolution'}{qualityControl}</label>}
+            <div className="grid gap-3 md:hidden">
+              <label className="grid gap-1">Model{modelControl}</label>
+              <label className="grid gap-1">Shape{shapeControl}</label>
+              <label className="grid gap-1">Results{countControl}</label>
+              <label className="grid gap-1">{spec.quality ? 'Quality' : 'Resolution'}{qualityControl}</label>
+            </div>
             <p className="font-mono text-xs text-muted-foreground">{totalEstimatedCost != null ? `about ${totalEstimatedCost} sparks` : 'Price unavailable'}</p>
             {/* LoRA selections (max 2) — only for models that support LoRA */}
             {modelCaps.hasLora && (
@@ -617,7 +779,7 @@ function GeneratePageInner() {
             )}
 
 
-            <h3 className="border-t border-border pt-3 font-medium">Advanced for this model</h3>
+
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={autoExpand} onChange={event => setAutoExpand(event.target.checked)} />
               Auto-expand on create
@@ -640,16 +802,6 @@ function GeneratePageInner() {
               </div>
             )}
 
-            {spec.image_size?.custom_size && imageSizePreset === 'custom' && (
-              <div className="grid gap-3">
-                <label className="grid gap-1">Width
-                  <input type="number" min={256} max={2048} step={8} value={width} onChange={event => setWidth(Math.max(256, Math.min(2048, Number(event.target.value))))} className="w-full rounded-md border border-input bg-background p-2" />
-                </label>
-                <label className="grid gap-1">Height
-                  <input type="number" min={256} max={2048} step={8} value={height} onChange={event => setHeight(Math.max(256, Math.min(2048, Number(event.target.value))))} className="w-full rounded-md border border-input bg-background p-2" />
-                </label>
-              </div>
-            )}
             {/* Safety Tolerance + Web Search */}
             {(modelCaps.hasSafetyTolerance || modelCaps.hasWebSearch) && (
               <div className="grid grid-cols-1 gap-4">
@@ -658,7 +810,7 @@ function GeneratePageInner() {
                     <label className="block text-xs text-muted-foreground mb-1">Safety Tolerance</label>
                     <select
                       value={safetyTolerance}
-                      onChange={(e) => { dirty.current.add('Safety tolerance'); setSafetyTolerance(e.target.value); }}
+                      onChange={(e) => { setSafetyTolerance(e.target.value); }}
                       className="w-full px-3 py-1.5 border border-border rounded-lg text-sm"
                     >
                       {SAFETY_LEVELS.filter((s) => s.level <= (modelCaps.maxSafetyLevel ?? 6)).map((s) => (
@@ -694,7 +846,7 @@ function GeneratePageInner() {
                     min={spec.steps_guidance?.steps?.minimum ?? 1}
                     max={spec.steps_guidance?.steps?.maximum ?? 50}
                     value={steps}
-                    onChange={(v) => { dirty.current.add('Steps'); setSteps(v); }}
+                    onChange={(v) => { setSteps(v); }}
                     className="w-full"
                   />
                 </div>
@@ -710,7 +862,7 @@ function GeneratePageInner() {
                     min={(spec.steps_guidance?.guidance?.minimum ?? 0) * 10}
                     max={(spec.steps_guidance?.guidance?.maximum ?? 20) * 10}
                     value={Math.round(guidance * 10)}
-                    onChange={(v) => { dirty.current.add('Guidance'); setGuidance(v / 10); }}
+                    onChange={(v) => { setGuidance(v / 10); }}
                     className="w-full"
                   />
                 </div>
@@ -732,127 +884,100 @@ function GeneratePageInner() {
           </>
         }
       />
-      {/* Full-size modal */}
       {selectedImage && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/70 z-50"
-            onClick={() => setSelectedImageId(null)}
-          />
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div
-              className="bg-card rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between p-4 border-b border-border">
-                <h3 className="font-semibold">Generated Image #{selectedImage.id}</h3>
-                <button
-                  onClick={() => deleteMutation.mutate(selectedImage.id, { onSuccess: () => setSelectedImageId(null) })}
-                  disabled={deleteMutation.isPending}
-                  className="ml-auto mr-3 rounded-md border border-input px-2 py-1 text-sm text-destructive disabled:opacity-50"
-                >
-                  Delete
-                </button>
-                <button
-                  onClick={() => setSelectedImageId(null)}
-                  className="p-1 hover:bg-muted rounded-lg transition-colors"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <div className="p-4 space-y-4">
-                {selectedImage.status === 'completed' && selectedImage.object_key ? (
-                  <LibraryImage
-                    src={generationApi.getImageUrl(selectedImage.id)}
-                    alt={selectedImage.prompt}
-                    className="max-w-full mx-auto rounded-lg"
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-64 bg-muted/30 rounded-lg">
-                    {selectedImage.status === 'failed' ? (
-                      <p className="text-red-600 text-sm">{selectedImage.error_message || 'Generation failed'}</p>
-                    ) : (
-                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                    )}
-                  </div>
-                )}
-                <div className="space-y-2 text-sm">
-                  <div>
-                    <span className="font-medium">Prompt:</span>
-                    <p className="text-muted-foreground mt-0.5">{selectedImage.prompt}</p>
-                  </div>
-                  {selectedImage.negative_prompt && (
-                    <div>
-                      <span className="font-medium">Negative:</span>
-                      <p className="text-muted-foreground mt-0.5">{selectedImage.negative_prompt}</p>
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-4">
-                    <span><span className="font-medium">Model:</span> {catalog?.generation.find(m => m.key === selectedImage.base_model)?.label || selectedImage.base_model}</span>
-                    {selectedImage.width && selectedImage.height && (
-                      <span><span className="font-medium">Size:</span> {selectedImage.width}x{selectedImage.height}</span>
-                    )}
-                    {selectedImage.loras && selectedImage.loras.length > 0 ? (
-                      <span>
-                        <span className="font-medium">LoRA{selectedImage.loras.length > 1 ? 's' : ''}:</span>{' '}
-                        {selectedImage.loras.map((l, i) => (
-                          <span key={l.lora_model_id}>
-                            {i > 0 && ', '}
-                            <Link href="/models" className="text-primary hover:underline" onClick={() => setSelectedImageId(null)}>
-                              {l.lora_model_name}
-                            </Link>
-                            {selectedImage.loras.length > 1 && (
-                              <span className="text-muted-foreground text-xs ml-0.5">({l.lora_scale.toFixed(1)})</span>
-                            )}
-                          </span>
-                        ))}
-                      </span>
-                    ) : selectedImage.lora_model_name && selectedImage.lora_model_id ? (
-                      <span>
-                        <span className="font-medium">LoRA:</span>{' '}
-                        <Link href="/models" className="text-primary hover:underline" onClick={() => setSelectedImageId(null)}>
-                          {selectedImage.lora_model_name}
-                        </Link>
-                      </span>
-                    ) : null}
-                    {selectedImage.generation_params && (() => {
-                      const gp = selectedImage.generation_params as Record<string, unknown>;
-                      return (
-                        <>
-                          {gp.num_inference_steps != null && (
-                            <span><span className="font-medium">Steps:</span> {gp.num_inference_steps as number}</span>
-                          )}
-                          {gp.guidance_scale != null && (
-                            <span><span className="font-medium">Guidance:</span> {gp.guidance_scale as number}</span>
-                          )}
-                          {gp.resolution != null && (
-                            <span><span className="font-medium">Resolution:</span> {String(gp.resolution)}</span>
-                          )}
-                          {gp.aspect_ratio != null && (
-                            <span><span className="font-medium">Aspect Ratio:</span> {String(gp.aspect_ratio)}</span>
-                          )}
-                          {gp.image_size != null && (
-                            <span><span className="font-medium">Image Size:</span> {String(gp.image_size)}</span>
-                          )}
-                          {gp.safety_tolerance != null && (
-                            <span><span className="font-medium">Safety:</span> {String(gp.safety_tolerance)}</span>
-                          )}
-                          {gp.enable_web_search != null && (
-                            <span><span className="font-medium">Web Search:</span> {gp.enable_web_search ? 'On' : 'Off'}</span>
-                          )}
-                          {gp.actual_seed != null && (
-                            <span><span className="font-medium">Seed:</span> {gp.actual_seed as number}</span>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 md:p-6" onClick={() => setSelectedImageId(null)}>
+          <div data-create-viewer role="dialog" aria-modal="true" aria-label={`Image ${selectedImage.id}`} className="grid h-full max-h-[900px] w-full max-w-[1440px] grid-rows-[minmax(0,1fr)_minmax(0,1fr)] overflow-hidden rounded-xl bg-card shadow-xl md:grid-cols-[minmax(0,1fr)_320px] md:grid-rows-1" onClick={event => event.stopPropagation()}>
+            <div className="relative min-h-0 min-w-0 bg-black/40 p-10">
+              <button id="create-viewer-close" aria-label="Close viewer" onClick={() => setSelectedImageId(null)} className="absolute left-3 top-3 z-10 rounded bg-black/60 px-2 py-1 text-sm text-white">Close · Esc</button>
+              {selectedImage.status === 'completed' && selectedImage.object_key ? (
+                <LibraryImage
+                  src={generationApi.getImageUrl(selectedImage.id)}
+                  alt={selectedImage.prompt}
+                  className="h-full w-full object-contain"
+                />
+              ) : selectedImage.status === 'failed' ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-white">
+                  <strong>{selectedFailure?.title}</strong>
+                  <p>{selectedFailure?.body}</p>
                 </div>
-              </div>
+              ) : (
+                <Loader2 className="animate-spin text-white" />
+              )}
+              {([-1, 1] as const).map(direction => {
+                const index = completed.findIndex(image => image.id === selectedImage.id);
+                const next = index >= 0 ? completed[index + direction] : undefined;
+                return next && (
+                  <button
+                    key={direction}
+                    aria-label={direction < 0 ? 'Previous image' : 'Next image'}
+                    onClick={() => setSelectedImageId(next.id)}
+                    className={`absolute top-1/2 rounded bg-black/60 p-2 text-white ${direction < 0 ? 'left-1' : 'right-1'}`}
+                  >
+                    {direction < 0 ? '‹' : '›'}
+                  </button>
+                );
+              })}
             </div>
+            <aside className="min-h-0 overflow-y-auto p-5 text-sm">
+              <h3 className="mb-5 text-lg font-semibold">{selectedImage.status === 'failed' ? "Didn’t finish" : `Image #${selectedImage.id}`}</h3>
+              <h4 className="mb-2 font-medium">Prompt</h4>
+              <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-muted-foreground">{selectedImage.prompt}</p>
+              <h4 className="mb-2 mt-5 font-medium">How it was made</h4>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+                {[
+                  ['Model', labelFor(selectedImage.base_model)],
+                  ['Shape', String(selectedImage.generation_params?.aspect_ratio || selectedImage.generation_params?.image_size || '—')],
+                  ['Size', selectedImage.width && selectedImage.height ? `${selectedImage.width} × ${selectedImage.height}` : '—'],
+                  ['Results in run', String(selectedImage.generation_params?.num_images ?? (selectedImage.job_id ? runs.get(`job-${selectedImage.job_id}`)?.length : 1) ?? 1)],
+                  ['Seed', String(selectedImage.generation_params?.actual_seed ?? selectedImage.generation_params?.seed ?? '—')],
+                  ['Cost', selectedImage.cost_sparks != null ? `${selectedImage.cost_sparks} sparks` : '—'],
+                  ['Made', formatDate(selectedImage.created_at)],
+                ].map(([key, value]) => (
+                  <div key={key} className="contents">
+                    <dt className="text-muted-foreground">{key}</dt>
+                    <dd className="break-words text-right">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              {selectedImage.status === 'failed' && (
+                <details className="mt-5">
+                  <summary className="cursor-pointer">Provider message</summary>
+                  <pre className="mt-2 whitespace-pre-wrap break-words text-xs">
+                    {selectedImage.error_message || 'No provider message available.'}
+                  </pre>
+                </details>
+              )}
+              <div className="mt-5 flex flex-wrap gap-3 border-t pt-4">
+                {selectedImage.library_image_id && (
+                  <Link href={`/images?image_id=${selectedImage.library_image_id}`} className="rounded-md border px-3 py-2">
+                    Open in library
+                  </Link>
+                )}
+                <button onClick={() => {
+                  if (window.confirm('Delete this generated image?')) {
+                    deleteMutation.mutate(selectedImage.id);
+                    setSelectedImageId(null);
+                  }
+                }} className="rounded-md border px-3 py-2 text-danger">Delete</button>
+              </div>
+            </aside>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
+}
+
+function relativeTime(date: string) {
+  const minutes = Math.max(0, Math.floor((Date.now() - parseUTC(date).getTime()) / 60000));
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
+  return `${Math.floor(minutes / 1440)}d ago`;
+}
+
+// Pending results have no size yet; reserve their requested shape so the grid doesn't jump.
+function shapeSize(image: GeneratedImage) {
+  const match = /^(\d+):(\d+)$/.exec(String(image.generation_params?.aspect_ratio ?? ''));
+  return match ? { width: Number(match[1]), height: Number(match[2]) } : { width: 1, height: 1 };
 }

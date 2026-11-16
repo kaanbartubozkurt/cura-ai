@@ -73,7 +73,7 @@ export default function ImageGrid(props: ImageGridProps) {
   );
 }
 
-function Segmented<T extends string | null>({
+export function Segmented<T extends string | null>({
   options,
   value,
   onChange,
@@ -220,10 +220,12 @@ function Tile({
 
 // Keep assignments and ratios for the current result sequence. Appending a page only
 // adds to the shortest column; existing DOM nodes and reserved heights stay put.
-function AppendOnlyGrid({ images, density, children }: {
-  images: Image[];
+export type GridItem = { id: number; width?: number | null; height?: number | null };
+
+export function AppendOnlyGrid<T extends GridItem>({ images, density, children }: {
+  images: T[];
   density: Density;
-  children: (image: Image) => ReactNode;
+  children: (image: T) => ReactNode;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);

@@ -319,6 +319,7 @@ export interface LoraUsed {
 }
 
 export interface GeneratedImage {
+  library_image_id?: number | null;
   id: number;
   prompt: string;
   negative_prompt: string | null;

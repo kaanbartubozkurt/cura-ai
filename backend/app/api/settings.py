@@ -1,8 +1,10 @@
 """Settings API endpoints."""
+import json
 import logging
+import math
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -12,6 +14,7 @@ from app.core.config import get_settings
 from app.core.security import get_current_user, require_admin
 from app.db.base import get_db
 from app.models.api_key import APIProvider
+from app.models.settings import AppSettings
 from app.models.user import User
 from app.services.model_catalog import (
     DEFAULT_EDIT_MODEL,
@@ -869,3 +872,36 @@ async def reset_edit_config(edit_model: str = DEFAULT_EDIT_MODEL, db: Session = 
     service = get_settings_service(db, current_user.id)
     service.delete_setting(f"edit_config:{edit_model}")
     return DEFAULT_EDIT_CONFIGS.get(edit_model, {})
+
+
+@router.get("/create-choices")
+async def get_create_choices(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Return this user's saved Create choices by model."""
+    rows = db.query(AppSettings).filter(
+        AppSettings.user_id == current_user.id,
+        AppSettings.key.startswith("create_choices:", autoescape=True),
+    ).all()
+    return {row.key.removeprefix("create_choices:"): json.loads(row.value) for row in rows}
+
+
+@router.put("/create-choices/{model_key}")
+async def put_create_choices(model_key: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Store a bounded flat object; catalog validation happens when choices are applied."""
+    require_image_model(model_key, "generate")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 4096:
+            raise HTTPException(413, "Create choices must be at most 4 KB")
+    try:
+        choices = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(422, "Expected a JSON object") from None
+    if not isinstance(choices, dict) or any(
+        not isinstance(value, (str, int, float, bool))
+        or (isinstance(value, float) and not math.isfinite(value))
+        for value in choices.values()
+    ):
+        raise HTTPException(422, "Expected a flat object of string, number or boolean values")
+    get_settings_service(db, current_user.id).set_setting(f"create_choices:{model_key}", json.dumps(choices))
+    return choices
