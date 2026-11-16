@@ -201,6 +201,35 @@ export default function PaintCanvas({ source, value, onChange, region }: {
   );
 }
 
+/** Turn a saved black/white mask (white = edited) back into paint strokes, for Remix. */
+export async function maskFromImage(url: string): Promise<PaintMask> {
+  // Fetch as a blob so the canvas stays readable even when the file is served from another origin.
+  const blob = await (await fetch(url)).blob();
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = PAINT_COLOR;
+  context.fillRect(0, 0, 1, 1);
+  const swatch = context.getImageData(0, 0, 1, 1).data;
+  const r = swatch[0], g = swatch[1], b = swatch[2];
+  context.clearRect(0, 0, 1, 1);
+  context.drawImage(bitmap, 0, 0);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  let painted = 0;
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    const on = pixels.data[i] > 127;
+    if (on) painted++;
+    pixels.data[i] = r;
+    pixels.data[i + 1] = g;
+    pixels.data[i + 2] = b;
+    pixels.data[i + 3] = on ? 255 : 0;
+  }
+  context.putImageData(pixels, 0, 0);
+  return { dataUrl: canvas.toDataURL('image/png'), percent: (painted / (canvas.width * canvas.height)) * 100 };
+}
+
 export async function maskFile(mask: PaintMask): Promise<File> {
   const image = new Image();
   image.src = mask.dataUrl;

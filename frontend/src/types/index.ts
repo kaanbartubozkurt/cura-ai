@@ -162,6 +162,51 @@ export interface ScopeStats {
   top_tags: { tag: string; count: number }[];
 }
 
+/** A saved edit, read back for Remix (GET /edit/images/{id}/recipe). */
+export interface EditRecipeSource {
+  type: 'gallery' | 'generated' | 'upload';
+  id?: number;
+  key?: string;
+  name?: string;
+  role?: 'reference' | 'element_main' | 'element_angle';
+  element?: number;
+  index: number;
+  available: boolean;
+  object_key?: string;
+  width?: number | null;
+  height?: number | null;
+  thumbnail_uri_medium?: string | null;
+  thumbnail_uri_large?: string | null;
+}
+
+export interface EditRecipe {
+  id: number;
+  job: 'describe' | 'paint' | 'objects' | 'subject';
+  edit_model: string;
+  prompt: string;
+  negative_prompt: string;
+  num_images: number;
+  settings: {
+    image_size?: string | { width: number; height: number };
+    resolution?: string;
+    aspect_ratio?: string;
+    quality?: string;
+    safety_tolerance?: string;
+    enable_web_search?: boolean;
+    enable_prompt_expansion?: boolean;
+    enable_safety_checker?: boolean;
+    result_type?: 'single' | 'series';
+    series_amount?: number;
+  };
+  original_seed: number | null;
+  has_mask: boolean;
+  object_boxes: unknown[] | null;
+  precision_area: 'none' | 'auto' | 'box' | null;
+  precision_box: { x_min: number; y_min: number; x_max: number; y_max: number } | null;
+  sources: EditRecipeSource[];
+  missing_sources: number;
+}
+
 export interface ClusterRunParams {
   method?: 'hdbscan' | 'kmeans' | 'graph';
   hdbscan_min_cluster_size?: number;

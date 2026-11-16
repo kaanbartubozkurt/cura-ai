@@ -41,6 +41,7 @@ import type {
   ModelBulkUpdateRequest,
   PipelineStats,
   ScopeStats,
+  EditRecipe,
   ClusterRunParams,
   PlatformUsageSummary,
   ProcessingCostResponse,
@@ -1240,6 +1241,16 @@ export const editApi = {
   getImageUrl: (id: number): string => {
     return authUrl(`/api/edit/images/${id}/file`);
   },
+
+  /** Everything needed to reopen Edit as it was for this result (Remix). */
+  getRecipe: async (id: number): Promise<EditRecipe> => {
+    const { data } = await api.get(`/edit/images/${id}/recipe`);
+    return data;
+  },
+
+  getMaskUrl: (id: number): string => authUrl(`/api/edit/images/${id}/mask`),
+
+  getSourceUrl: (id: number, index: number): string => authUrl(`/api/edit/images/${id}/sources/${index}`),
 
   getThumbnailUrl: (filename: string): string => {
     return authUrl(`/api/edit/thumbnails/${filename}`);
