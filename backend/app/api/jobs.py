@@ -388,7 +388,11 @@ async def retry_job(job_id: int, db: Session = Depends(get_db), current_user: Us
     elif job.job_type in (JobType.FULL_PIPELINE, JobType.REPROCESS) and job.image_id:
         task = dispatch(process_image_pipeline, job.image_id, user_id, job_id=new_job.id)
     elif job.job_type == JobType.CLUSTER:
-        task = dispatch(cluster_all_images, user_id, job_id=new_job.id)
+        cluster_params = job.parameters or {}
+        task = dispatch(
+            cluster_all_images, user_id, job_id=new_job.id,
+            image_ids=cluster_params.get("image_ids"), params=cluster_params.get("params"),
+        )
     elif job.job_type == JobType.BATCH_REPROCESS:
         image_ids = (job.result or {}).get("image_ids", [])
         if not image_ids:

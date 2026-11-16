@@ -20,6 +20,10 @@ from app.services.storage import get_storage_service
 logger = logging.getLogger(__name__)
 
 
+# Runs made from a folder or a selection add clusters instead of replacing them.
+SCOPED_RUN_PREFIX = "scoped-"
+
+
 class ClusterService:
     """Service for cluster CRUD and management operations."""
 
@@ -177,8 +181,13 @@ class ClusterService:
         result: ClusteringResult,
         image_ids: list[int],
         embeddings: np.ndarray,
+        include_noise: bool = True,
     ) -> list[Cluster]:
-        """Create cluster records from clustering result."""
+        """Create cluster records from clustering result.
+
+        ``include_noise=False`` skips the "Unclustered Images" group; scoped runs
+        use it so the Clusters page keeps a single unclustered group.
+        """
         clusters = []
         unique_labels = set(result.labels) - {-1}
 
@@ -238,7 +247,7 @@ class ClusterService:
 
         # Handle noise points (label == -1) - create a single "unclustered" group
         noise_mask = result.labels == -1
-        if noise_mask.any():
+        if include_noise and noise_mask.any():
             noise_indices = np.where(noise_mask)[0]
             noise_image_ids = [image_ids[i] for i in noise_indices]
 
@@ -398,9 +407,15 @@ class ClusterService:
             return True
         return False
 
-    def delete_old_clusters(self, keep_run_id: str | None = None) -> int:
-        """Delete old clusters, optionally keeping a specific run."""
+    def delete_old_clusters(self, keep_run_id: str | None = None, library_only: bool = False) -> int:
+        """Delete old clusters, optionally keeping a specific run.
+
+        With ``library_only`` only whole-library runs are removed: clusters made
+        from a folder or a selection (run_id starting with SCOPED_RUN_PREFIX) stay.
+        """
         query = self.db.query(Cluster).filter(Cluster.user_id == self.user_id)
+        if library_only:
+            query = query.filter(~Cluster.run_id.startswith(SCOPED_RUN_PREFIX))
         if keep_run_id:
             query = query.filter(Cluster.run_id != keep_run_id)
 

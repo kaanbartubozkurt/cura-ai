@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.security import get_current_user, get_current_user_from_token_param
 from app.db.base import get_db
-from app.models import Job, JobStatus, JobType
+from app.models import Folder, FolderImage, Job, JobStatus, JobType
 from app.models.user import User
 from app.schemas import (
     ClusterDetailResponse,
@@ -24,6 +24,7 @@ from app.schemas import (
     TriggerClusteringResponse,
 )
 from app.services.cluster_service import get_cluster_service
+from app.services.settings_service import DEFAULT_CLUSTERING_CONFIG
 from app.services.storage import get_storage_service
 from app.workers.dispatch import dispatch
 from app.workers.tasks import cluster_all_images, summarize_cluster, summarize_clusters
@@ -43,9 +44,9 @@ async def list_clusters(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List all clusters from the latest clustering run."""
+    """List clusters from every run (whole-library, folder and selection runs)."""
     cluster_service = get_cluster_service(db, current_user.id)
-    clusters = cluster_service.get_latest_clusters(limit=None, include_archived=include_archived)
+    clusters = cluster_service.get_clusters(limit=None, include_archived=include_archived)
 
     if not include_archived:
         clusters = [c for c in clusters if not c.is_archived]
@@ -109,7 +110,7 @@ async def backfill_cluster_covers(
 ):
     """Generate composite cover images for all clusters."""
     cluster_service = get_cluster_service(db, current_user.id)
-    clusters = cluster_service.get_latest_clusters(limit=500)
+    clusters = cluster_service.get_clusters(limit=500)
     generated = 0
     for cluster in clusters:
         try:
@@ -256,12 +257,42 @@ async def trigger_reclustering(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Trigger re-clustering of all embedded images."""
+    """Cluster the whole library, one folder, or a set of images.
+
+    Whole-library runs replace the previous whole-library run. Folder and
+    selection runs add new clusters and leave every existing cluster alone.
+    """
+    image_ids: list[int] | None = None
+    scope = "library"
+    if request and request.folder_id is not None:
+        folder = db.query(Folder).filter(Folder.id == request.folder_id, Folder.user_id == current_user.id).first()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        image_ids = [
+            row[0] for row in db.query(FolderImage.image_id).filter(FolderImage.folder_id == folder.id).all()
+        ]
+        scope = "folder"
+    elif request and request.image_ids is not None:
+        image_ids = list(dict.fromkeys(request.image_ids))
+        scope = "selection"
+    if image_ids is not None and len(image_ids) < 2:
+        raise HTTPException(status_code=400, detail="Choose at least 2 images to cluster")
+
+    params = {k: v for k, v in ((request.params if request else None) or {}).items() if k in DEFAULT_CLUSTERING_CONFIG}
+    if request and request.method:
+        params.setdefault("method", request.method)
+
     # Create job record
     job = Job(
         job_type=JobType.CLUSTER,
         status=JobStatus.PENDING,
-        parameters={"method": request.method if request else None},
+        total_items=len(image_ids) if image_ids is not None else 0,
+        parameters={
+            "scope": scope,
+            "folder_id": request.folder_id if request else None,
+            "image_ids": image_ids,
+            "params": params or None,
+        },
         user_id=current_user.id,
     )
     db.add(job)
@@ -269,7 +300,9 @@ async def trigger_reclustering(
     db.refresh(job)
 
     # Queue clustering task
-    task = dispatch(cluster_all_images, current_user.id, job_id=job.id)
+    task = dispatch(
+        cluster_all_images, current_user.id, job_id=job.id, image_ids=image_ids, params=params or None
+    )
 
     # Update job with task ID
     job.celery_task_id = task.id
@@ -278,7 +311,7 @@ async def trigger_reclustering(
     return TriggerClusteringResponse(
         job_id=job.id,
         status="queued",
-        message="Clustering job queued",
+        message="Clustering job queued" if scope == "library" else f"Clustering {len(image_ids)} images",
     )
 
 
@@ -286,7 +319,7 @@ async def trigger_reclustering(
 async def trigger_all_cluster_summarization(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Trigger AI summarization for all clusters."""
     cluster_service = get_cluster_service(db, current_user.id)
-    clusters = cluster_service.get_latest_clusters(limit=500)
+    clusters = cluster_service.get_clusters(limit=500)
     cluster_ids = [c.id for c in clusters if not c.summary_title]
 
     if not cluster_ids:

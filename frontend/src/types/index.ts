@@ -129,6 +129,45 @@ export interface JobListResponse {
   limit: number;
 }
 
+export interface ScopeCount {
+  id: number;
+  name: string;
+  count: number;
+}
+
+/** Inspector stats for the whole library, one folder or one cluster (GET /images/scope-stats). */
+export interface ScopeStats {
+  scope: 'library' | 'folder' | 'cluster';
+  total: number;
+  pending: number;
+  failed: number;
+  not_described: number;
+  tagged: number;
+  described: number;
+  embedded: number;
+  in_cluster: number;
+  cluster_count: number;
+  clusters: ScopeCount[];
+  in_folder: number;
+  folder_count: number;
+  folders: ScopeCount[];
+  in_other_folders: number | null;
+  sources: { upload: number; generated: number; edited: number };
+  orientation: { portrait: number; landscape: number; square: number };
+  total_bytes: number;
+  first_added: string | null;
+  last_added: string | null;
+  added_7d: number;
+  added_30d: number;
+  top_tags: { tag: string; count: number }[];
+}
+
+export interface ClusterRunParams {
+  method?: 'hdbscan' | 'kmeans' | 'graph';
+  hdbscan_min_cluster_size?: number;
+  kmeans_max_clusters?: number;
+}
+
 export interface PipelineStats {
   total_images: number;
   pending: number;

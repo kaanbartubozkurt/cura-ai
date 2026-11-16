@@ -17,8 +17,9 @@ Join the [SightLab Discord](https://discord.gg/bH2RqXWmjx) to ask questions, sha
 ### Library
 - **Upload** thousands of images. Uploads run in the background, so you can leave the page while they finish.
 - **Automatic processing**: every image is tagged, described and embedded by vision AI.
-- **Clusters** group similar images and give each group an AI-written title and summary. You can pin, rename, archive, merge and export clusters.
+- **Clusters** group similar images and give each group an AI-written title and summary. Cluster a folder or any selection of images; each run adds new clusters and keeps the ones you already have. You can pin, rename, archive, merge and export clusters.
 - **Folders** let you organize images by hand.
+- **Inspector**: All images, each folder and each cluster show statistics for the images in that view (how many are described, clustered or failed, which clusters and folders they fall into, top tags, sources). Turn on **Select** (or Cmd/Shift-click an image) to select images by clicking them; the inspector then shows stats for the selection and the organizing actions: describe, cluster, add to or remove from a folder, exclude from a cluster, delete. Each action has a single-key shortcut. Creating, editing and training live in Tools.
 - **Search** by describing what you want. Search combines meaning (embeddings) with plain text matching.
 - **Created and edited images join the library** like any upload. They are searchable and can be clustered.
 
@@ -32,7 +33,7 @@ All tools share a canvas, a prompt box at the bottom, and settings on the right.
   - **Arrange objects**: draw named boxes to place, move or remove objects.
   - **Keep a subject**: keep a person or object consistent across a single image or a series.
 - **Vision**: tag, describe or ask your own question about any image.
-- **My models**: train a LoRA from a folder, cluster or selection, or upload a `.safetensors` file. Try a model, see what it made, and evaluate it against its training images.
+- **My models**: train a LoRA from a folder or cluster, or upload a `.safetensors` file. Try a model, see what it made, and evaluate it against its training images.
 
 ### How it was made
 Every created or edited image keeps a permanent record of its prompt, model, settings and input images. Open an image in the library to see it under **How it was made**. The record survives even if its inputs, LoRA or model are later deleted or retired; deleted inputs are kept as low-resolution copies.
@@ -67,7 +68,7 @@ Next.js 14 frontend ──▶ FastAPI backend ──▶ PostgreSQL 16 + pgvector
 2. **Tag**: vision AI extracts a flat list of tags.
 3. **Describe**: vision AI writes a detailed, sectioned description.
 4. **Embed**: tags and description become a 1536-dimension embedding.
-5. **Cluster**: HDBSCAN (default), K-Means or graph clustering, with optional UMAP reduction.
+5. **Cluster**: HDBSCAN (default), K-Means or graph clustering, with optional UMAP reduction. Runs on a folder or a selection add clusters without touching existing ones; a whole-library run from the Clusters page replaces only the previous whole-library run.
 6. **Summarize**: AI writes a title and summary for each cluster.
 
 Re-tagging or re-describing an image re-embeds it automatically. All data is isolated per user.

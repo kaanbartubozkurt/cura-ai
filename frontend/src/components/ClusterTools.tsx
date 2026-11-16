@@ -30,7 +30,7 @@ export default function ClusterTools({ clusters, detail = false, onDone }: { clu
   return <>
     <div className="grid grid-cols-2 gap-2">
       {!detail && <button className={button} disabled={busy || clusters.length < 2} onClick={() => run('Clusters merged', async () => { await clustersApi.merge(clusters.map(c => c.id)); onDone?.(); })}>Merge</button>}
-      <button className={button} disabled={busy} onClick={() => setTrain(true)}>Train model</button>
+      {!detail && <button className={button} disabled={busy} onClick={() => setTrain(true)}>Train model</button>}
       <button className={button} disabled={busy} onClick={() => run('Images ready to add', async () => {
         const ids = new Set<number>();
         for (const cluster of clusters) {

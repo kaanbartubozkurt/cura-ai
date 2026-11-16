@@ -1,5 +1,6 @@
 """Touch smoke checks against the localhost seed account; never dispatches paid work."""
 
+import re
 import asyncio, json, os
 from playwright.async_api import async_playwright
 
@@ -91,18 +92,12 @@ async def main():
         await page.locator("main").evaluate("(e)=>e.scrollTop=0")
         await page.get_by_role("button", name="Select", exact=True).first.tap()
         await page.locator(".library-tile").first.locator("button").first.tap()
-        await page.get_by_role("button", name="More tools", exact=True).tap()
+        await page.get_by_role("button", name="Describe", exact=True).tap()
         await page.get_by_role("dialog", name="Inspector").wait_for()
         await page.screenshot(path=OUT + "/phone-selection-sheet.png")
-        await page.get_by_role("button", name="Edit", exact=True).tap()
-        assert (
-            await page.get_by_role("dialog", name="Inspector")
-            .locator("textarea")
-            .count()
-            == 1
-        )
+        assert await page.get_by_role("dialog", name="Inspector").get_by_text("Describe these images").count() >= 1
         await page.get_by_role("button", name="Close inspector", exact=True).tap()
-        await page.get_by_role("button", name="Clear selection", exact=True).tap()
+        await page.get_by_role("button", name=re.compile(r"^Done")).first.tap()
         await page.locator(".library-tile").first.locator("button").first.tap()
         await page.get_by_role("dialog", name="Image viewer").wait_for()
         await page.screenshot(path=OUT + "/phone-viewer.png")

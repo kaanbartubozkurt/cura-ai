@@ -304,11 +304,59 @@ class PipelineStats(BaseModel):
     total_clusters: int
 
 
+class ScopeCount(BaseModel):
+    id: int
+    name: str
+    count: int
+
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
+
+class ScopeStats(BaseModel):
+    """Inspector statistics for the whole library, one folder or one cluster."""
+
+    scope: str
+    total: int
+    pending: int
+    failed: int
+    not_described: int
+    tagged: int
+    described: int
+    embedded: int
+    in_cluster: int
+    cluster_count: int
+    clusters: list[ScopeCount]
+    in_folder: int
+    folder_count: int
+    folders: list[ScopeCount]
+    in_other_folders: int | None = None
+    sources: dict[str, int]
+    orientation: dict[str, int]
+    total_bytes: int
+    first_added: datetime | None = None
+    last_added: datetime | None = None
+    added_7d: int
+    added_30d: int
+    top_tags: list[TagCount]
+
+
 # Trigger schemas
 class TriggerClusteringRequest(BaseModel):
     """Request to trigger clustering."""
 
     method: str | None = Field(default=None, description="Clustering method: hdbscan, kmeans, graph")
+    image_ids: list[int] | None = Field(
+        default=None, description="Cluster only these images; new clusters are added, none are removed"
+    )
+    folder_id: int | None = Field(
+        default=None, description="Cluster only this folder's images; new clusters are added, none are removed"
+    )
+    params: dict | None = Field(
+        default=None, description="Per-run overrides of the saved clustering config (same keys)"
+    )
 
 
 class TriggerClusteringResponse(BaseModel):
