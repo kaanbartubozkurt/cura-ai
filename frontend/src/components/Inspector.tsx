@@ -9,7 +9,7 @@ import LibraryImage from '@/components/LibraryImage';
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Sparkles, X } from 'lucide-react';
+import { PanelRightClose, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   billingApi,
@@ -52,6 +52,7 @@ export default function Inspector({
   hasBatchRunning,
   onDispatched,
   onDismiss,
+  onHide,
   clusterId,
   overview,
 }: {
@@ -67,6 +68,7 @@ export default function Inspector({
   hasBatchRunning: boolean;
   onDispatched: () => void;
   onDismiss?: () => void;
+  onHide?: () => void;
 }) {
   const sheet = useMobileSheet(!!onDismiss, () => onDismiss?.());
   const [swipeY, setSwipeY] = useState(0);
@@ -194,23 +196,43 @@ export default function Inspector({
       aria-label="Inspector"
       className="flex h-full min-h-[500px] w-full flex-col border-l border-border bg-background"
     >
-      <header onTouchStart={e => setSwipeY(e.touches[0].clientY)} onTouchEnd={e => { if (e.changedTouches[0].clientY - swipeY > 80 && window.innerWidth < 768) onDismiss?.(); }} className="flex items-center justify-between border-b border-border p-4">
-        <h2 className="flex items-center gap-2 font-medium">
+      <header
+        onTouchStart={e => setSwipeY(e.touches[0].clientY)}
+        onTouchEnd={e => {
+          if (e.changedTouches[0].clientY - swipeY > 80 && window.innerWidth < 768) onDismiss?.();
+        }}
+        className="flex items-center justify-between border-b border-border p-4"
+      >
+        <h2 className="flex min-w-0 flex-1 items-center gap-2 font-medium">
           <Sparkles className="h-4 w-4" />
           {tool || (images.length ? `${images.length} selected` : title)}
         </h2>
-        <button
-          aria-label={tool ? 'Close tool' : 'Clear selection'}
-          onClick={() => (tool ? onTool(null) : onClear())}
-          className="rounded p-1 hover:bg-accent"
-        >
-          {tool ? <X className="h-4 w-4" /> : images.length ? 'Clear' : null}
-        </button>
-        {onDismiss && (
-          <button aria-label="Close inspector" onClick={onDismiss} className="rounded p-1 hover:bg-accent">
-            <X className="h-4 w-4" />
+        <div className="ml-2 flex shrink-0 items-center gap-1">
+          <button
+            aria-label={tool ? 'Close tool' : 'Clear selection'}
+            onClick={() => (tool ? onTool(null) : onClear())}
+            className="rounded p-1 hover:bg-accent"
+          >
+            {tool ? <X className="h-4 w-4" /> : images.length ? 'Clear' : null}
           </button>
-        )}
+          {onDismiss && (
+            <button aria-label="Close inspector" onClick={onDismiss} className="rounded p-1 hover:bg-accent">
+              <X className="h-4 w-4" />
+            </button>
+          )}
+          {onHide && (
+            <button
+              type="button"
+              aria-label="Hide inspector"
+              title="Hide inspector"
+              aria-expanded={true}
+              onClick={onHide}
+              className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </header>
       <div className="flex-1 space-y-5 overflow-y-auto p-4 text-sm">
         {!tool && !images.length && overview}
