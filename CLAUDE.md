@@ -396,6 +396,13 @@ npm run lint         # ESLint
 - **Backend:** `sentry-sdk[fastapi,celery]` initialized on startup in `main.py` (`_init_sentry()`) and in each Celery worker via `worker_ready` signal. Reads DSN from DB once at startup — restart required after DSN change.
 - **Frontend:** `@sentry/react` initialized lazily on mount (`lib/sentry.ts`). Fetches DSN from public endpoint `GET /api/settings/sentry-dsn` (no auth required). Error boundaries (`app/error.tsx`, `app/global-error.tsx`) report caught errors to Sentry.
 - **Dashboard:** [sentry.io](https://sentry.io) — Issues, Performance, and Alerts dashboards. Events are tagged with `environment` (local/dev/prod) and frontend events include `session_id`.
+- **Monitors and alerts** (org `personal-1hi`, project `sightlab-local`, which receives all environments; configured 2026-11-16 in the Sentry UI, not in code). Notifications go by email to the owner; Sentry's Discord integration needs the paid Team plan, so Discord alerts come from our own load-time alerts instead (`docs/load-time-alerts.md`).
+  - `Slow API on DEV: server p95 over 1s` — p95 of `http.server` spans, 10 min (medium above 500 ms)
+  - `Slow API in browser on DEV: p75 over 2s` — p75 of `http.client` spans from the frontend, 10 min (medium above 1 s)
+  - `Slow page load on DEV: LCP p75 over 4s` — p75 `browser.web_vital.lcp.value`, 30 min (medium above 2.5 s)
+  - Alert `Email Stuart: slow load times on DEV` is connected to the three monitors above (new, escalating, regressed and resolved issues)
+  - Alert `Email Stuart: new or returning errors` is connected to the built-in Error Monitor (level error or above; warnings such as `Slow API request` don't notify)
+  - Sentry's performance detection also flags N+1 queries as issues (see #131)
 
 ## Authentication
 

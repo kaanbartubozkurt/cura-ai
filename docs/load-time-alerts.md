@@ -40,3 +40,7 @@ To test by hand on a development instance:
 3. After the next completed minute and evaluation, inspect the admin summary and Discord. Ensure `ENVIRONMENT=dev` and the webhook is configured on the backend app. Local evaluation populates Redis but intentionally sends no Discord messages.
 4. Keep adding enough low-duration samples for the slow values to leave the window, then maintain healthy traffic for a full window. Check for one recovery message. Lower the window to one minute for a faster dev test.
 5. Run `PYTHONPATH=. NUMBA_CACHE_DIR=/tmp/cura-numba-cache pytest tests/test_load_timings.py` in `backend` for payload, rate-limit, histogram, threshold, cooldown, recovery, wording, environment and middleware checks without Redis or Discord.
+
+## Sentry monitors
+
+Sentry (sentry.io) also watches load times from its own tracing data and emails the owner: server API p95 over 1 s, browser API p75 over 2 s and page load (LCP) p75 over 4 s, all on DEV. The list is in CLAUDE.md under Observability → Sentry. The two systems answer different questions: Sentry keeps history and traces for digging in, while these alerts post to Discord, the channel that gets read. Sentry can't post to Discord on its current plan.
