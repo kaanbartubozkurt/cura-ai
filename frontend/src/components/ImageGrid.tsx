@@ -10,7 +10,7 @@ import { Suspense, useState, useEffect, useMemo, useRef, type ReactNode } from '
 import { useDeletingImages } from '@/lib/deletingImages';
 import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
-import { Check, FileText, FolderMinus, FolderPlus, Loader2, RefreshCw, Trash2, X } from 'lucide-react';
+import { Check, FileText, FolderMinus, FolderPlus, Loader2, PanelRightOpen, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { imagesApi, jobsApi } from '@/lib/api';
 import ImageDrawer from '@/components/ImageDrawer';
@@ -330,6 +330,23 @@ function ImageGridContent({
     if (entryTool === 'Train model') setMobileInspector(true);
   }, [entryTool, router]);
 
+  const changeInspectorHidden = (hidden: boolean) => {
+    setInspectorHidden(hidden);
+    try {
+      localStorage.setItem('library-inspector-hidden', String(hidden));
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (wide && (tool || mobileInspector)) {
+      setInspectorHidden(false);
+      try {
+        localStorage.setItem('library-inspector-hidden', 'false');
+      } catch {}
+      setMobileInspector(false);
+    }
+  }, [wide, tool, mobileInspector]);
+
   const inspectorVisible = wide && !inspectorHidden;
   const [openImage, setOpenImage] = useState<Image | null>(null);
   const [selectMode, setSelectMode] = useState(false);
@@ -337,7 +354,7 @@ function ImageGridContent({
   const [density, setDensity] = useState<Density>('M');
   const [mobileMenu, setMobileMenu] = useState<'jobs' | 'more' | 'actions' | null>(null);
   const sheetRef = useMobileSheet(!!mobileMenu, () => setMobileMenu(null));
-  const inspectorRef = useMobileSheet(mobileInspector || !!tool, () => { setMobileInspector(false); setTool(null); });
+  const inspectorRef = useMobileSheet(!wide && (mobileInspector || !!tool), () => { setMobileInspector(false); setTool(null); });
   const gesture = useRef<{ x: number; y: number; timer?: ReturnType<typeof setTimeout>; sweeping: boolean; suppress: boolean }>({ x: 0, y: 0, sweeping: false, suppress: false });
   useEffect(() => () => clearTimeout(gesture.current.timer), []);
   const [showDescribeAll, setShowDescribeAll] = useState(false);
@@ -523,33 +540,10 @@ function ImageGridContent({
           </h1>
           <button className="md:hidden ml-auto min-h-10" onClick={() => selecting ? clearSelection() : setSelectMode(true)}>{selecting ? `Done · ${selectedIds.size}` : 'Select'}</button>
           {(headerActions || inspectorOverview) && <button className="md:hidden min-h-10" onClick={() => setMobileMenu('actions')}>Options</button>}
-          <button
-            aria-pressed={inspectorVisible}
-            onClick={() => {
-              const hidden = !inspectorHidden;
-              setInspectorHidden(hidden);
-              try {
-                localStorage.setItem('library-inspector-hidden', String(hidden));
-              } catch {}
-            }}
-            className="rounded-md border border-border px-2 py-1 text-xs min-[1100px]:block hidden"
-          >
-            {inspectorVisible ? 'Hide inspector' : 'Show inspector'}
-          </button>
           {headerActions && (
             <div className="ml-auto hidden md:flex flex-wrap items-center gap-1.5">{headerActions}</div>
           )}
         </div>
-        {!inspectorVisible && (
-          <button
-            onClick={() => {
-              navigateTool('Create');
-            }}
-            className="hidden md:block rounded-md border border-border px-3 py-1.5 text-sm"
-          >
-            Create
-          </button>
-        )}
         {subtitle}
 
 
@@ -745,7 +739,7 @@ function ImageGridContent({
               setSelectedIds(new Set([image.id]));
               setToolImages([image]);
               setTool(next);
-              // Explicit tool handoffs can open a temporary inspector without changing the saved preference.
+              // Tool handoffs open the docked inspector on wide screens and the sheet on narrow screens.
               setMobileInspector(true);
               setOpenImage(null);
             }}
@@ -758,54 +752,85 @@ function ImageGridContent({
           />
         )}
       </div>
-      {(inspectorVisible || tool || mobileInspector) && (
+      {(wide || tool || mobileInspector) && (
         <div
           ref={inspectorRef as React.RefObject<HTMLDivElement>}
           className={cn(
-            'library-inspector sticky top-4 h-[calc(100vh-120px)] w-[340px] shrink-0',
-            !inspectorVisible && 'fixed inset-0 z-50 h-full w-full bg-background sm:left-auto sm:w-[340px]'
+            'library-inspector sticky top-4 h-[calc(100vh-120px)] shrink-0',
+            wide && 'overflow-hidden transition-[width] duration-[180ms] motion-reduce:transition-none',
+            wide && inspectorHidden ? 'w-11' : 'w-[340px]',
+            !wide && 'fixed inset-0 z-50 h-full w-full bg-background sm:left-auto sm:w-[340px]'
           )}
         >
-          <Inspector
-            onDismiss={
-              !inspectorVisible
-                ? () => {
-                    setMobileInspector(false);
-                    setTool(null);
-                    setToolImages(null);
-                    const params = new URLSearchParams(searchParams.toString());
-                    params.delete('tool');
-                    router.replace(params.size ? `${pathname}?${params}` : pathname, { scroll: false });
-                  }
-                : undefined
-            }
-            title={title}
-            total={total}
-            images={toolImages ?? Array.from(selectedIds).map(id => images.find(image => image.id === id)).filter((image): image is Image => !!image)}
-            tool={tool}
-            onTool={(next) => {
-              if (navigateTool(next)) return;
-              setTool(next);
-              if (!next) {
-                setToolImages(null);
-                const params = new URLSearchParams(searchParams.toString());
-                params.delete('tool');
-                router.replace(params.size ? `${pathname}?${params}` : pathname, { scroll: false });
+          {wide && inspectorHidden ? (
+            <aside
+              aria-label="Inspector"
+              className="flex h-full flex-col items-center gap-3 border-l border-border bg-background pt-4"
+            >
+              <button
+                type="button"
+                aria-label="Show inspector"
+                title="Show inspector"
+                aria-expanded={false}
+                onClick={() => changeInspectorHidden(false)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <PanelRightOpen className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                aria-label="Show inspector"
+                title="Show inspector"
+                aria-expanded={false}
+                onClick={() => changeInspectorHidden(false)}
+                className="rounded px-1 py-1.5 text-xs tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground [writing-mode:vertical-rl]"
+              >
+                Inspector
+              </button>
+            </aside>
+          ) : (
+            <Inspector
+              onHide={wide ? () => changeInspectorHidden(true) : undefined}
+              onDismiss={
+                !wide
+                  ? () => {
+                      setMobileInspector(false);
+                      setTool(null);
+                      setToolImages(null);
+                      const params = new URLSearchParams(searchParams.toString());
+                      params.delete('tool');
+                      router.replace(params.size ? `${pathname}?${params}` : pathname, { scroll: false });
+                    }
+                  : undefined
               }
-            }}
-            onClear={() => {
-              clearSelection();
-              setToolImages(null);
-            }}
-            folderId={folderId}
-            clusterId={clusterId}
-            overview={inspectorOverview}
-            hasBatchRunning={hasBatchRunning}
-            onDispatched={() => {
-              setMobileInspector(false);
-              void queryClient.invalidateQueries({ queryKey: [queryKeyPrefix] });
-            }}
-          />
+              title={title}
+              total={total}
+              images={toolImages ?? Array.from(selectedIds).map(id => images.find(image => image.id === id)).filter((image): image is Image => !!image)}
+              tool={tool}
+              onTool={(next) => {
+                if (navigateTool(next)) return;
+                setTool(next);
+                if (!next) {
+                  setToolImages(null);
+                  const params = new URLSearchParams(searchParams.toString());
+                  params.delete('tool');
+                  router.replace(params.size ? `${pathname}?${params}` : pathname, { scroll: false });
+                }
+              }}
+              onClear={() => {
+                clearSelection();
+                setToolImages(null);
+              }}
+              folderId={folderId}
+              clusterId={clusterId}
+              overview={inspectorOverview}
+              hasBatchRunning={hasBatchRunning}
+              onDispatched={() => {
+                setMobileInspector(false);
+                void queryClient.invalidateQueries({ queryKey: [queryKeyPrefix] });
+              }}
+            />
+          )}
         </div>
       )}
     </div>
