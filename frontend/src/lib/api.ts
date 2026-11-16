@@ -716,7 +716,16 @@ export const jobsApi = {
 };
 
 // Settings API
+export type CreateChoices = Record<string, string | number | boolean>;
+
 export const settingsApi = {
+  getCreateChoices: async (): Promise<Record<string, CreateChoices>> => {
+    const { data } = await api.get('/settings/create-choices');
+    return data;
+  },
+  putCreateChoices: async (model: string, choices: CreateChoices) => {
+    await api.put(`/settings/create-choices/${encodeURIComponent(model)}`, choices);
+  },
   getModelCatalog: async (): Promise<ModelCatalog> => (await api.get('/settings/model-catalog')).data,
   getPrompts: async (): Promise<{
     description_prompt: string;
@@ -1069,6 +1078,7 @@ export const generationApi = {
   },
 
   listImages: async (params?: {
+    mode?: 'generate' | 'edit';
     lora_model_id?: number;
     status?: string;
     skip?: number;

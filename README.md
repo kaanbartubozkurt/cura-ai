@@ -21,7 +21,7 @@ The rest of this README covers how SightLab works and how to run it yourself.
 ### Tools
 All tools share one layout: sources and results on the canvas, a prompt box at the bottom, and model settings on the right. Each run is a background job with a price estimate shown before you start.
 
-- **Create**: make new images from a prompt, optionally with one of your LoRA models.
+- **Create**: make new images from a prompt, optionally with one of your LoRA models. Browse creations as cards, view images fitted to your screen, and keep your settings for each model across devices.
 - **Edit** has four jobs. You choose the job first and then a model that can do it:
   - **Describe the change**: say what should change, using one or more source images.
   - **Paint an area**: brush over the part to change.
