@@ -13,7 +13,7 @@ python -m pip install -c constraints.txt -c constraints-dev.txt -e ".[dev]"
 python -m pip check
 python -c "import app.db.base; print(app.db.base.engine.dialect.driver)"
 ruff check .
-pytest tests/test_fal_generator.py tests/test_fal_editor.py tests/test_dispatch.py tests/test_cost_calculator.py tests/test_no_retry_decorators.py tests/test_model_registry_drift.py tests/test_cluster_service_enum_guard.py tests/test_clustering_small_n.py tests/test_model_catalog_schema.py tests/test_model_catalog_billing_drift.py tests/test_model_catalog_settings.py tests/test_fal_language_routing.py tests/test_removed_models_rejected.py tests/test_migration_055.py tests/test_library_generated_images.py tests/test_generated_image_deletion.py tests/test_empty_cluster_cleanup.py tests/test_stuck_job_reconciliation.py tests/test_discord_job_alerts.py tests/test_scoped_clustering.py -v
+pytest tests/test_fal_generator.py tests/test_fal_editor.py tests/test_dispatch.py tests/test_cost_calculator.py tests/test_no_retry_decorators.py tests/test_model_registry_drift.py tests/test_cluster_service_enum_guard.py tests/test_clustering_small_n.py tests/test_model_catalog_schema.py tests/test_model_catalog_billing_drift.py tests/test_model_catalog_settings.py tests/test_fal_language_routing.py tests/test_removed_models_rejected.py tests/test_migration_055.py tests/test_library_generated_images.py tests/test_generated_image_deletion.py tests/test_empty_cluster_cleanup.py tests/test_stuck_job_reconciliation.py tests/test_discord_job_alerts.py tests/test_scoped_clustering.py tests/test_ingest_queue.py -v
 ```
 
 ## Tier 1 — hermetic, every PR
@@ -25,6 +25,7 @@ This tier is for pure functions and services, plus carefully mocked provider and
 ### Current coverage
 
 - `test_clustering_small_n.py` — runs real UMAP and all three clusterers on small float32 embedding sets, including the spectral initialization boundary; also checks UMAP skip/clamp behavior without DB or network access.
+- `test_ingest_queue.py` — `process_ingest`/`process_ingest_batch` route to the `ingest` queue, every default-worker command (compose, cloud-native script, Terraform) consumes `celery,ingest`, and a re-delivered `process_ingest` skips images already past PENDING.
 - `test_scoped_clustering.py` — folder/selection clustering runs add clusters (scoped run id, no noise group, no deletes) while whole-library runs replace only the previous whole-library run; per-run config overrides; image-id scoping of the clustering query.
 - `test_cost_calculator.py` — catalog resolution and precedence, Sparks estimation, cost calculation, and operation-specific token-estimation routing; its isolated SQLite fixture creates only `CostCatalog`.
 - `test_dispatch.py` — `dispatch_or_fail()` returns successful dispatches unchanged, but marks the `Job` and supplied `GeneratedImage` records `FAILED`, sets errors, commits, and returns HTTP 503 when Celery dispatch fails.
