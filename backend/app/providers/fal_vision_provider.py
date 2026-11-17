@@ -121,6 +121,24 @@ def _extract_json(text: str) -> dict:
     return {}
 
 
+STOPPED_EARLY = (
+    "The model stopped before finishing its answer, which usually means its safety filter "
+    "blocked the image. Try another model."
+)
+
+
+def _cut_off_json(content: str, parsed: dict, key: str) -> bool:
+    """True when the model started a JSON answer but never finished it.
+
+    Some models (e.g. Gemini) stop mid-answer when their safety filter trips and fal
+    reports zero usage. Saving that half sentence as a description would be wrong.
+    """
+    if parsed.get(key) or parsed.get("error"):
+        return False
+    start = content.strip().removeprefix("```json").removeprefix("```").lstrip()
+    return start.startswith("{")
+
+
 def _to_data_uri(image_data: bytes, mime_type: str) -> str:
     """Convert image bytes to a base64 data URI."""
     if mime_type == "image/jpg":
@@ -194,6 +212,8 @@ class FalVisionTagger(BaseTagger):
         parsed = _extract_json(content)
 
         # Check for AI-reported error
+        if _cut_off_json(content, parsed, "tags"):
+            parsed = {"error": STOPPED_EARLY}
         if "error" in parsed and not parsed.get("tags"):
             error = AIContentError(parsed["error"], operation="tag")
             write_log(
@@ -295,6 +315,8 @@ class FalVisionDescriber(BaseDescriber):
         parsed = _extract_json(content)
 
         # Check for AI-reported error
+        if _cut_off_json(content, parsed, "description"):
+            parsed = {"error": STOPPED_EARLY}
         if "error" in parsed and not parsed.get("description"):
             error = AIContentError(parsed["error"], operation="describe")
             write_log(
