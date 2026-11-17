@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { Repeat2 } from 'lucide-react';
+import { Brush, Repeat2 } from 'lucide-react';
 import { AppendOnlyGrid, Segmented } from '@/components/ImageGrid';
 import ProgressiveImage from '@/components/ProgressiveImage';
 import ImageHistoryPanel from '@/components/ImageHistoryPanel';
@@ -110,6 +110,7 @@ function Viewer({
   onUse,
   onDelete,
   onRemix,
+  onPaintOn,
   label,
 }: {
   image: GeneratedImage;
@@ -118,6 +119,7 @@ function Viewer({
   onUse: (image: GeneratedImage) => void;
   onDelete: (id: number) => void;
   onRemix?: (id: number) => void;
+  onPaintOn?: (image: GeneratedImage) => void;
   label: string;
 }) {
   const { data: history } = useQuery({
@@ -255,6 +257,19 @@ function Viewer({
                 Remix
               </button>
             )}
+            {onPaintOn && (
+              <button
+                className="flex items-center gap-1.5 rounded border px-3 py-2"
+                onClick={() => {
+                  onPaintOn(image);
+                  onClose();
+                }}
+                title="Make this result the base and paint on it"
+              >
+                <Brush className="h-3.5 w-3.5" />
+                Paint on this
+              </button>
+            )}
             <button
               className="rounded border px-3 py-2"
               onClick={() => {
@@ -310,6 +325,7 @@ export default function DescribeResults({
   onUse,
   onDelete,
   onRemix,
+  onPaintOn,
   modelLabel,
 }: {
   images: GeneratedImage[];
@@ -317,6 +333,8 @@ export default function DescribeResults({
   onDelete: (id: number) => void;
   /** Reopen Edit with this result's sources, prompt and settings. */
   onRemix?: (id: number) => void;
+  /** Paint an area: make this result the base (its paint starts empty). */
+  onPaintOn?: (source: SourceImage) => void;
   modelLabel: (key: string) => string;
 }) {
   const [density, setDensity] = useState<'S' | 'M' | 'L'>('M');
@@ -331,15 +349,16 @@ export default function DescribeResults({
     .sort((a, b) => b.id - a.id);
   const completed = visible.filter((image) => image.status === 'completed');
   const image = completed.find((item) => item.id === selected);
+  const toSource = (image: GeneratedImage): SourceImage => ({
+    type: 'generated',
+    id: image.id,
+    previewUrl: preview(image),
+    fullUrl: editApi.getImageUrl(image.id),
+    width: image.width ?? undefined,
+    height: image.height ?? undefined,
+  });
   function use(image: GeneratedImage) {
-    onUse({
-      type: 'generated',
-      id: image.id,
-      previewUrl: preview(image),
-      fullUrl: editApi.getImageUrl(image.id),
-      width: image.width ?? undefined,
-      height: image.height ?? undefined,
-    });
+    onUse(toSource(image));
   }
   return (
     <div className="min-w-0 flex-1" aria-label="Edited results">
@@ -382,12 +401,19 @@ export default function DescribeResults({
                 <span className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/65 px-1.5 py-0.5 text-[10px] text-white">
                   Edited
                 </span>
-                <button
-                  className="absolute bottom-2 right-2 rounded bg-background/95 px-2 py-1 text-xs opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
-                  onClick={() => use(image)}
-                >
-                  + Use as source
-                </button>
+                <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                  {onPaintOn && (
+                    <button
+                      className="rounded bg-background/95 px-2 py-1 text-xs"
+                      onClick={() => onPaintOn(toSource(image))}
+                    >
+                      Paint on this
+                    </button>
+                  )}
+                  <button className="rounded bg-background/95 px-2 py-1 text-xs" onClick={() => use(image)}>
+                    + Use as source
+                  </button>
+                </div>
               </>
             ) : (
               <span role="status" className="sr-only">
@@ -412,6 +438,7 @@ export default function DescribeResults({
           onUse={use}
           onDelete={onDelete}
           onRemix={onRemix}
+          onPaintOn={onPaintOn ? (result) => onPaintOn(toSource(result)) : undefined}
         />
       )}
     </div>

@@ -33,7 +33,10 @@ export default function DescribeInput({
   onAdd,
   onUpload,
   onHover,
+  firstTag,
 }: {
+  /** Short tag on the first source, e.g. "Base" for Paint an area. */
+  firstTag?: string;
   sources: SourceImage[];
   value: string;
   onChange: (value: string) => void;
@@ -236,6 +239,11 @@ export default function DescribeInput({
               >
                 {index + 1}
               </span>
+              {index === 0 && firstTag && (
+                <span className="absolute right-0 top-0 rounded-bl bg-black/70 px-1 text-[9px] font-medium text-white">
+                  {firstTag}
+                </span>
+              )}
             </button>
             <button
               type="button"

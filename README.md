@@ -30,7 +30,7 @@ All tools share a canvas, a prompt box at the bottom, and settings on the right.
 - **Edit** has four jobs. You choose the job first and then a model that can do it:
   - **Describe the change**: attach and reorder source images in the prompt box, reference them with numbered image chips, and browse edits as library-style cards. Hover a source to inspect its original; reuse a result as your next source.
   - **Remix** any result from its viewer: Edit reopens with the same sources, prompt, model and settings (with a new seed, or the original one if you choose) so you can change just what you want before applying.
-  - **Paint an area**: brush over the part to change.
+  - **Paint an area**: brush over the part to change on the base image, with undo/redo and invert. Sources and the prompt work like Describe the change (image 1 is the base; mention references with @), results show as library-style cards, and **Paint on this** turns a result into the new base. Ideogram can keep everything outside a drawn precision box untouched.
   - **Arrange objects**: draw named boxes to place, move or remove objects.
   - **Keep a subject**: keep a person or object consistent across a single image or a series.
 - **Vision**: tag, describe or ask your own question about any image.
