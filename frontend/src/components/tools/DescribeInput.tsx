@@ -245,6 +245,20 @@ export default function DescribeInput({
                 </span>
               )}
             </button>
+            {firstTag && index > 0 && (
+              <button
+                type="button"
+                aria-label={`Make source ${index + 1} the ${firstTag.toLowerCase()}`}
+                title={`Make this the ${firstTag.toLowerCase()} (first image)`}
+                onClick={() => {
+                  move(index, 0);
+                  hover();
+                }}
+                className="absolute -left-1 -top-1 z-10 rounded border border-border bg-background px-1 text-[9px] font-medium opacity-0 shadow-sm group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+              >
+                Make {firstTag.toLowerCase()}
+              </button>
+            )}
             <button
               type="button"
               aria-label={`Remove source ${index + 1}`}

@@ -1693,7 +1693,8 @@ function EditPageInner() {
             {job === 'paint' && (
               <p className="border-l-2 border-selection pl-2 text-xs text-muted-foreground">
                 Paint over what should change on the base (image 1). Other images are
-                references you can mention with @.
+                references you can mention with @. To paint on another source, hover it
+                and choose Make base, or drag it to the first position.
               </p>
             )}
             {!usesChipPrompt && (
