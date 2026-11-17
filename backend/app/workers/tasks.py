@@ -1513,7 +1513,8 @@ def run_batch_reprocess(self, job_id: int, user_id: int, image_ids: list[int], t
         # Reconcile once now in case every child has already finished.
         from app.services.job_recovery import reconcile_batch
 
-        job = db.query(Job).filter(Job.id == job_id).with_for_update().populate_existing().first()
+        # of=Job: Job eager-joins its image, and FOR UPDATE can't lock an outer join's nullable side.
+        job = db.query(Job).filter(Job.id == job_id).with_for_update(of=Job).populate_existing().first()
         finished = bool(job) and reconcile_batch(db, job)
         db.commit()
 
@@ -1609,7 +1610,8 @@ def run_batch_describe(
         # Reconcile once now in case every child has already finished.
         from app.services.job_recovery import reconcile_batch
 
-        job = db.query(Job).filter(Job.id == job_id).with_for_update().populate_existing().first()
+        # of=Job: Job eager-joins its image, and FOR UPDATE can't lock an outer join's nullable side.
+        job = db.query(Job).filter(Job.id == job_id).with_for_update(of=Job).populate_existing().first()
         finished = bool(job) and reconcile_batch(db, job)
         db.commit()
 
