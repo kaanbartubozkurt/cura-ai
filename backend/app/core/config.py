@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
 
     discord_alert_webhook_url: SecretStr = SecretStr("")
+    # Billing margin guard (report_billing_metrics): alert when, over 24 h, we charge less
+    # than this multiple of provider cost, or provider cost exceeds this many USD.
+    billing_min_markup: float = 1.5
+    billing_daily_cost_alert_usd: float = 25.0
 
     load_alert_window_minutes: int = Field(default=10, ge=1, le=120)
     load_alert_min_samples: int = Field(default=5, ge=1)
