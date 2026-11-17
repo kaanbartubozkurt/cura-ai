@@ -54,3 +54,26 @@ def test_report_is_scheduled_hourly():
     entry = celery_app.conf.beat_schedule["report-billing-metrics"]
     assert entry["task"] == "app.workers.billing_metrics_tasks.report_billing_metrics"
     assert entry["schedule"] == 3600.0
+
+
+def test_emit_records_one_span_per_group_with_numeric_costs(monkeypatch):
+    from contextlib import contextmanager
+
+    spans = []
+
+    @contextmanager
+    def start_span(op, name):
+        span = MagicMock()
+        spans.append((op, span))
+        yield span
+
+    monkeypatch.setattr(task.sentry_sdk, "start_span", start_span)
+    monkeypatch.setattr(task.sentry_sdk, "start_transaction", lambda **kwargs: MagicMock())
+    monkeypatch.setattr(task.sentry_sdk.metrics, "count", lambda *args, **kwargs: None)
+    task.emit({"usage": [{"provider": "fal", "model": "m", "operation": "edit", "calls": 2,
+                          "cost_usd": 0.1, "charged_usd": 0.2}], "revenue": {}}, "dev")
+    (op, span), = spans
+    data = {call.args[0]: call.args[1] for call in span.set_data.call_args_list}
+    assert op == "billing.usage"
+    assert data["billing.provider_cost_usd"] == 0.1 and data["billing.charged_usd"] == 0.2
+    assert data["model"] == "m" and data["env"] == "dev"

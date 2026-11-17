@@ -73,16 +73,32 @@ def collect(db, since: datetime, until: datetime) -> dict:
 
 
 def emit(data: dict, environment: str) -> None:
-    """Send the collected numbers to Sentry as metrics (summed in the dashboards)."""
-    for row in data["usage"]:
-        attrs = {"provider": row["provider"], "model": row["model"], "operation": row["operation"],
-                 "env": environment}
-        sentry_sdk.metrics.count("billing.provider_cost_usd", row["cost_usd"], unit="usd", attributes=attrs)
-        sentry_sdk.metrics.count("billing.charged_usd", row["charged_usd"], unit="usd", attributes=attrs)
-        sentry_sdk.metrics.count("billing.calls", row["calls"], attributes=attrs)
-    for provider, usd in data["revenue"].items():
-        sentry_sdk.metrics.count("billing.revenue_usd", usd, unit="usd",
-                                 attributes={"provider": provider, "env": environment})
+    """Send the collected numbers to Sentry, summed in the dashboards.
+
+    As spans (stored on every Sentry plan; dashboards sum their numeric
+    attributes, e.g. ``sum(billing.provider_cost_usd)`` on ``span.op:billing.usage``)
+    and as Application Metrics (only kept when that Sentry product is enabled).
+    """
+    with sentry_sdk.start_transaction(op="billing.report", name="billing.report", sampled=True):
+        for row in data["usage"]:
+            attrs = {"provider": row["provider"], "model": row["model"], "operation": row["operation"],
+                     "env": environment}
+            with sentry_sdk.start_span(op="billing.usage", name=f"{row['operation']} {row['model']}") as span:
+                for key, value in attrs.items():
+                    span.set_data(key, value)
+                span.set_data("billing.provider_cost_usd", row["cost_usd"])
+                span.set_data("billing.charged_usd", row["charged_usd"])
+                span.set_data("billing.calls", row["calls"])
+            sentry_sdk.metrics.count("billing.provider_cost_usd", row["cost_usd"], unit="usd", attributes=attrs)
+            sentry_sdk.metrics.count("billing.charged_usd", row["charged_usd"], unit="usd", attributes=attrs)
+            sentry_sdk.metrics.count("billing.calls", row["calls"], attributes=attrs)
+        for provider, usd in data["revenue"].items():
+            with sentry_sdk.start_span(op="billing.revenue", name=f"revenue {provider}") as span:
+                span.set_data("provider", provider)
+                span.set_data("env", environment)
+                span.set_data("billing.revenue_usd", usd)
+            sentry_sdk.metrics.count("billing.revenue_usd", usd, unit="usd",
+                                     attributes={"provider": provider, "env": environment})
 
 
 def margin_alerts(cost_24h: float, charged_24h: float, settings) -> list[tuple[str, str]]:
@@ -121,8 +137,13 @@ def report_billing_metrics():
         last_day = collect(db, now - timedelta(hours=24), now)
         cost_24h = sum(row["cost_usd"] for row in last_day["usage"])
         charged_24h = sum(row["charged_usd"] for row in last_day["usage"])
-        sentry_sdk.metrics.gauge("billing.markup_24h", charged_24h / cost_24h if cost_24h else 0,
-                                 attributes={"env": settings.environment})
+        markup = charged_24h / cost_24h if cost_24h else 0
+        sentry_sdk.metrics.gauge("billing.markup_24h", markup, attributes={"env": settings.environment})
+        with sentry_sdk.start_transaction(op="billing.margin", name="billing.margin", sampled=True) as margin:
+            margin.set_data("env", settings.environment)
+            margin.set_data("billing.cost_24h_usd", cost_24h)
+            margin.set_data("billing.charged_24h_usd", charged_24h)
+            margin.set_data("billing.markup_24h", markup)
         for key, message in margin_alerts(cost_24h, charged_24h, settings):
             # At most one alert per guard per day.
             if store is None or store.set(ALERT_KEY.format(key), "1", nx=True, ex=86400):
