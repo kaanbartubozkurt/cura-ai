@@ -1,5 +1,6 @@
 """Celery tasks for the image processing pipeline."""
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -2205,6 +2206,8 @@ def _create_reconciliation_anomaly(
     detail["decision_id"] = decision.id
     if decision.trace_id:
         detail["trace_id"] = decision.trace_id
+    # JSON-safe: details carry Decimal sparks, which the JSON column can't store.
+    detail = json.loads(json.dumps(detail, default=str))
     anomaly = BillingAnomaly(
         user_id=decision.user_id,
         anomaly_type=anomaly_type,
