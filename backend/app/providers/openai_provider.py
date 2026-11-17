@@ -38,12 +38,12 @@ class OpenAIEmbedder(BaseEmbedder):
             usage = response.usage
             logger.warning(
                 "OPENAI_AUDIT [embed] model=%s elapsed=%.0fms\n"
-                "  REQUEST: text_len=%d text=%.500s\n"
+                "  REQUEST: text_len=%d\n"
                 "  RESPONSE_FULL: %s\n"
                 "  USAGE_DETAIL: %s\n"
                 "  ACTUAL: in=%s",
                 self.model, elapsed,
-                len(text), text,
+                len(text),  # never the text itself: it's the user's tags and description (#159)
                 {k: v for k, v in response.model_dump().items() if k != "data"},  # skip embedding vector
                 usage.model_dump() if usage else None,
                 usage.total_tokens if usage else None,
