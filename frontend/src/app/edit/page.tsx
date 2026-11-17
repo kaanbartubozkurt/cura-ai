@@ -435,7 +435,7 @@ function EditPageInner() {
     const kept = restored.filter((source): source is SourceImage => !!source);
     setSources(kept);
     setJob(recipe.job);
-    if (recipe.job === 'describe') {
+    if (recipe.job === 'describe' || recipe.job === 'paint') {
       setDescribePrompt(remixPrompt(recipe, restored));
       setPromptEditorKey((key) => key + 1);
     }
@@ -475,10 +475,11 @@ function EditPageInner() {
     setRemixId(id);
   };
 
-  const sentPrompt =
-    job === 'describe'
-      ? translatePrompt(describePrompt, sources, editModel)
-      : prompt;
+  // Describe and Paint share the prompt editor with source chips.
+  const usesChipPrompt = job === 'describe' || job === 'paint';
+  const sentPrompt = usesChipPrompt
+    ? translatePrompt(describePrompt, sources, editModel)
+    : prompt;
   const [masks, setMasks] = useState<Record<string, PaintMask>>({});
   const baseKey = sources[0]
     ? `${sources[0].type}-${sources[0].id ?? sources[0].previewUrl}`
@@ -1111,7 +1112,7 @@ function EditPageInner() {
         onChange={(event) => changeModel(event.target.value)}
       >
         {(catalog?.edit ?? [])
-          .filter((model) => model.jobs.includes('describe'))
+          .filter((model) => model.jobs.includes(job))
           .map((model) => (
             <option key={model.key} value={model.key}>
               {model.label}
@@ -1367,12 +1368,13 @@ function EditPageInner() {
           >
             {job === 'paint' &&
               editModel === 'ideogram-v4.5-edit' &&
-              region.area === 'box' && (
+              region.area === 'box' &&
+              drawPrecision && (
                 <button
-                  className="self-start rounded border border-border px-2 py-1 text-xs"
-                  onClick={() => setDrawPrecision(!drawPrecision)}
+                  className="self-center rounded-md border border-border bg-background px-3 py-1 text-xs shadow-sm"
+                  onClick={() => setDrawPrecision(false)}
                 >
-                  {drawPrecision ? 'Paint inside area' : 'Draw precision area'}
+                  {region.box ? 'Done: paint inside the box' : 'Drag on the image to draw the precision box'}
                 </button>
               )}
             <div
@@ -1393,6 +1395,16 @@ function EditPageInner() {
                 value={mask}
                 onChange={(value) =>
                   setMasks((current) => ({ ...current, [baseKey]: value }))
+                }
+                toolbarExtra={
+                  editModel === 'ideogram-v4.5-edit' && region.area === 'box' ? (
+                    <button
+                      onClick={() => setDrawPrecision(true)}
+                      className="rounded px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    >
+                      {region.box ? 'Redraw precision box' : 'Draw precision box'}
+                    </button>
+                  ) : undefined
                 }
               />
             </div>
@@ -1508,7 +1520,7 @@ function EditPageInner() {
                   }
                 />
               )}
-            {job === 'paint' || job === 'objects' ? (
+            {job === 'objects' ? (
               <>
                 <div className="md:hidden">
                   <SheetButton
@@ -1527,7 +1539,7 @@ function EditPageInner() {
                 </details>
               </>
             ) : null}
-            {job === 'describe' ? (
+            {job === 'describe' || job === 'paint' ? (
               <DescribeResults
                 images={images}
                 modelLabel={(key) =>
@@ -1535,6 +1547,18 @@ function EditPageInner() {
                 }
                 onDelete={(id) => deleteMutation.mutate(id)}
                 onRemix={startRemix}
+                onPaintOn={
+                  job === 'paint'
+                    ? (result) =>
+                        // The result becomes the new base; its paint starts empty.
+                        setSources((current) => [
+                          result,
+                          ...current
+                            .slice(1)
+                            .filter((item) => !(item.type === result.type && item.id === result.id)),
+                        ])
+                    : undefined
+                }
                 onUse={(source) => {
                   if (
                     sources.some(
@@ -1553,7 +1577,7 @@ function EditPageInner() {
             ) : (
               results
             )}
-            {job === 'describe' && hoverSource && (
+            {usesChipPrompt && hoverSource && (
               <div className="pointer-events-none absolute inset-0 z-20 flex flex-col bg-[hsl(240_10%_4%_/_0.88)] p-4 text-white">
                 <div className="min-h-0 flex-1">
                   <ProgressiveImage
@@ -1583,9 +1607,10 @@ function EditPageInner() {
           <Composer
             value={prompt}
             input={
-              job === 'describe' ? (
+              usesChipPrompt ? (
                 <DescribeInput
                   key={promptEditorKey}
+                  firstTag={job === 'paint' ? 'Base' : undefined}
                   sources={sources}
                   value={describePrompt}
                   onChange={setDescribePrompt}
@@ -1623,9 +1648,9 @@ function EditPageInner() {
               !sources.length ||
               sources.length > maxSources
             }
-            chips={job === 'describe' ? describeChips : undefined}
+            chips={usesChipPrompt ? describeChips : undefined}
             mobileChips={
-              job === 'describe' ? (
+              usesChipPrompt ? (
                 <>
                   {describeChips}
                   <SheetButton title="Settings" label="Advanced" />
@@ -1665,7 +1690,13 @@ function EditPageInner() {
           <>
             <h2 className="text-sm font-semibold">{jobs[job]}</h2>
             <Notice>{notice}</Notice>
-            {job !== 'describe' && (
+            {job === 'paint' && (
+              <p className="border-l-2 border-selection pl-2 text-xs text-muted-foreground">
+                Paint over what should change on the base (image 1). Other images are
+                references you can mention with @.
+              </p>
+            )}
+            {!usesChipPrompt && (
               <ModelPanel
                 models={catalog?.edit ?? []}
                 job={job}
@@ -1673,7 +1704,7 @@ function EditPageInner() {
                 onChange={changeModel}
               />
             )}
-            {job !== 'describe' && (
+            {!usesChipPrompt && (
               <label className="block text-xs text-muted-foreground">
                 {job === 'subject' && resultType === 'series'
                   ? 'Series images'
@@ -1718,33 +1749,44 @@ function EditPageInner() {
                 Advanced for this model
               </h3>
               {job === 'paint' && editModel === 'ideogram-v4.5-edit' && (
-                <>
-                  <label className="block text-xs text-muted-foreground">
-                    Precision area
-                    <select
-                      className="mt-1 w-full rounded-md border border-input bg-background p-2"
-                      value={region.area}
-                      onChange={(event) => {
-                        setDrawPrecision(event.target.value === 'box');
-                        setRegions((current) => ({
-                          ...current,
-                          [baseKey]: {
-                            ...region,
-                            area: event.target.value as 'none' | 'auto' | 'box',
-                          },
-                        }));
-                      }}
+                <fieldset className="space-y-1.5">
+                  <legend className="mb-1 text-xs text-muted-foreground">
+                    Keep the rest untouched
+                  </legend>
+                  {(
+                    [
+                      ['none', 'Off', 'Fastest. Ideogram may also change pixels outside the paint.'],
+                      ['auto', 'Automatic area', 'Ideogram picks an area around the paint.'],
+                      ['box', 'Draw a precision box', 'Only pixels inside the box can change.'],
+                    ] as const
+                  ).map(([area, label, hint]) => (
+                    <label
+                      key={area}
+                      className={cn(
+                        'flex cursor-pointer gap-2 rounded-md border px-2.5 py-2 text-[12.5px]',
+                        region.area === area ? 'border-foreground ring-1 ring-foreground' : 'border-border'
+                      )}
                     >
-                      <option value="none">None</option>
-                      <option value="auto">Auto</option>
-                      <option value="box">Drawn box</option>
-                    </select>
-                  </label>
-                  <p className="text-xs text-muted-foreground">
-                    Ideogram can change more than the area you paint. Only a
-                    drawn box keeps everything outside it untouched.
-                  </p>
-                </>
+                      <input
+                        type="radio"
+                        name="precision-area"
+                        className="mt-0.5"
+                        checked={region.area === area}
+                        onChange={() => {
+                          setDrawPrecision(area === 'box' && !region.box);
+                          setRegions((current) => ({
+                            ...current,
+                            [baseKey]: { ...region, area },
+                          }));
+                        }}
+                      />
+                      <span className="flex flex-col">
+                        {label}
+                        <span className="text-[11.5px] text-muted-foreground">{hint}</span>
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
               )}
               {job === 'objects' && objectControls}
               {/* Negative prompt */}
