@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     # Billing margin guard (report_billing_metrics): alert when, over 24 h, we charge less
     # than this multiple of provider cost, or provider cost exceeds this many USD.
     billing_min_markup: float = 1.5
+    # Log full provider payloads (prompts, outputs) for local development only; ignored on dev/prod (#159).
+    log_provider_payloads: bool = False
     billing_daily_cost_alert_usd: float = 25.0
 
     load_alert_window_minutes: int = Field(default=10, ge=1, le=120)

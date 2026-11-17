@@ -27,6 +27,7 @@ from app.providers.base import (
     VisionEvalResult,
 )
 from app.providers.fal_provider import _ensure_fal_key
+from app.providers.log_safety import for_log  # noqa: E402
 from app.providers.prompts import (
     ASSESSMENT_SUMMARY_PROMPT,
     CLUSTER_SUMMARY_PROMPT,
@@ -98,7 +99,7 @@ def _fal_submit_and_poll(endpoint: str, arguments: dict, poll_interval: float = 
     """Submit a fal.ai request and poll for completion at a sane interval."""
     from fal_client.client import Completed
 
-    logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, _sanitize_for_log(arguments))
+    logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, for_log(_sanitize_for_log(arguments)))
     handle = fal_client.submit(endpoint, arguments=arguments)
     while True:
         status = handle.status(with_logs=False)
@@ -106,7 +107,7 @@ def _fal_submit_and_poll(endpoint: str, arguments: dict, poll_interval: float = 
             break
         time.sleep(poll_interval)
     result = handle.get()
-    logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, handle.request_id, result)
+    logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, handle.request_id, for_log(result))
     return result
 
 

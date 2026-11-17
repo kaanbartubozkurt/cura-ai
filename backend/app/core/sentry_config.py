@@ -4,6 +4,7 @@ Provides common integrations and log filtering so both init paths
 stay consistent.
 """
 import logging
+import re
 
 
 def get_sentry_init_kwargs():
@@ -42,13 +43,32 @@ def get_sentry_init_kwargs():
 
 
 def _before_send_log(log, _hint):
-    """Filter noisy logs before sending to Sentry."""
+    """Filter noisy logs and strip user content before sending to Sentry (#159)."""
     body = log.get("body", "")
     if "/health" in body:
         return None
     if "mingle" in body.lower() or "gossip" in body.lower():
         return None
+    log["body"] = redact_content(body)
+    attributes = log.get("attributes")
+    if isinstance(attributes, dict):
+        for key, value in attributes.items():
+            if isinstance(value, str):
+                attributes[key] = redact_content(value)
     return log
+
+
+_REFUSAL = re.compile(r"(AI could not \w+ image|fal\.ai OpenRouter \w+ refused)[:]?[^\n]*")
+
+
+def redact_content(text):
+    """Prompts, outputs and model refusal texts (they describe the user's image) never reach Sentry."""
+    from app.providers.log_safety import redact
+
+    if not isinstance(text, str):
+        return text
+    text = _REFUSAL.sub(lambda m: f"{m.group(1)}: [model's reason redacted]", text)
+    return redact(text)
 
 
 _URL_KEYS = {"url", "http.url", "url.full", "http.target", "url.path"}
@@ -92,4 +112,24 @@ def sanitize_event(event, _hint=None):
         _scrub_data(span.get("data"))
     for breadcrumb in event.get("breadcrumbs", {}).get("values", []):
         sanitize_breadcrumb(breadcrumb)
+        if isinstance(breadcrumb.get("message"), str):
+            breadcrumb["message"] = redact_content(breadcrumb["message"])
+    # Exception messages and log messages can carry prompts (provider errors echo
+    # the input) or model refusal texts that describe the user's image (#159).
+    for exception in (event.get("exception") or {}).get("values", []) or []:
+        if isinstance(exception.get("value"), str):
+            exception["value"] = redact_content(exception["value"])
+    for field in ("logentry", "message"):
+        entry = event.get(field)
+        if isinstance(entry, dict):
+            for key in ("message", "formatted"):
+                if isinstance(entry.get(key), str):
+                    entry[key] = redact_content(entry[key])
+        elif isinstance(entry, str):
+            event[field] = redact_content(entry)
+    extra = event.get("extra")
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            if isinstance(value, str):
+                extra[key] = redact_content(value)
     return event
