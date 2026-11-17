@@ -127,6 +127,17 @@ def _update_job_status(db: Session, job_id: int | None, status: JobStatus, **kwa
     for key, value in kwargs.items():
         setattr(job, key, value)
     db.commit()
+    if status in (JobStatus.COMPLETED, JobStatus.FAILED) and (job.parameters or {}).get("parent_job_id"):
+        # Batch children report back so the batch's progress and completion never
+        # depend on a poller that a worker restart could kill (#143).
+        try:
+            from app.services.job_recovery import advance_batch_parent
+
+            advance_batch_parent(db, job)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning(f"Could not update the batch of job {job_id}", exc_info=True)
 
 
 def _assign_folder_on_completion(db: Session, job: Job):
@@ -1497,69 +1508,20 @@ def run_batch_reprocess(self, job_id: int, user_id: int, image_ids: list[int], t
                 job.result = {"image_ids": image_ids, "dispatched": True, "queued": queued}
                 db.commit()
 
-        # Phase 2: Poll until all images have finished (no longer INGESTED)
-        image_id_set = set(image_ids)
-        poll_interval = 5  # seconds
-        while True:
-            # Re-check if job was cancelled during polling
-            db.expire_all()
-            job = db.query(Job).filter(Job.id == job_id).first()
-            if job and job.status in (JobStatus.CANCELLED, JobStatus.FAILED):
-                logger.info(f"Batch reprocess job {job_id} cancelled during polling")
-                return {"status": "cancelled", "total": len(image_ids)}
+        # Phase 2: each child reports its own completion (advance_batch_parent in
+        # _update_job_status), so no poller has to survive worker restarts (#143).
+        # Reconcile once now in case every child has already finished.
+        from app.services.job_recovery import reconcile_batch
 
-            done_count = (
-                db.query(Image)
-                .filter(
-                    Image.id.in_(image_id_set),
-                    Image.status != ImageStatus.INGESTED,
-                )
-                .count()
-            )
-
-            if job:
-                job.progress = done_count
-                db.commit()
-
-            if done_count >= len(image_ids):
-                break
-
-            time.sleep(poll_interval)
-
-        # Count outcomes
-        failed_count = (
-            db.query(Image)
-            .filter(Image.id.in_(image_id_set), Image.status == ImageStatus.FAILED)
-            .count()
-        )
-        succeeded = len(image_ids) - failed_count
-
-        job = db.query(Job).filter(Job.id == job_id).first()
-        if job:
-            job.completed_at = datetime.utcnow()
-            job.result = {
-                "total": len(image_ids),
-                "queued": queued,
-                "succeeded": succeeded,
-                "failed": failed_count,
-                "image_ids": image_ids,
-                "dispatched": True,
-            }
-            if failed_count >= len(image_ids):
-                job.status = JobStatus.FAILED
-                job.error_message = f"All {failed_count} images failed"
-            elif failed_count > 0:
-                job.status = JobStatus.COMPLETED
-                job.error_message = f"{failed_count}/{len(image_ids)} images failed"
-            else:
-                job.status = JobStatus.COMPLETED
-            db.commit()
+        job = db.query(Job).filter(Job.id == job_id).with_for_update().populate_existing().first()
+        finished = bool(job) and reconcile_batch(db, job)
+        db.commit()
 
         elapsed = (time.monotonic() - task_start) * 1000
         write_log(category=LogCategory.TASK,
-                  message=f"Task run_batch_reprocess completed in {elapsed:.0f}ms ({succeeded} succeeded, {failed_count} failed)",
+                  message=f"Task run_batch_reprocess dispatched {queued} images in {elapsed:.0f}ms",
                   task_name="run_batch_reprocess", job_id=job_id, duration_ms=round(elapsed, 1), user_id=user_id)
-        return {"status": "success", "total": len(image_ids), "succeeded": succeeded, "failed": failed_count}
+        return {"status": "dispatched", "total": len(image_ids), "queued": queued, "finished": finished}
 
     except Exception as e:
         # A failed SQL transaction must be rolled back before recording failure.
@@ -1642,68 +1604,20 @@ def run_batch_describe(
                 job.result = {"image_ids": image_ids, "dispatched": True, "queued": queued}
                 db.commit()
 
-        # Phase 2: Poll until all images have finished
-        image_id_set = set(image_ids)
-        poll_interval = 5
-        while True:
-            db.expire_all()
-            job = db.query(Job).filter(Job.id == job_id).first()
-            if job and job.status in (JobStatus.CANCELLED, JobStatus.FAILED):
-                logger.info(f"Batch describe job {job_id} cancelled during polling")
-                return {"status": "cancelled", "total": len(image_ids)}
+        # Phase 2: each child reports its own completion (advance_batch_parent in
+        # _update_job_status), so no poller has to survive worker restarts (#143).
+        # Reconcile once now in case every child has already finished.
+        from app.services.job_recovery import reconcile_batch
 
-            done_count = (
-                db.query(Image)
-                .filter(
-                    Image.id.in_(image_id_set),
-                    Image.status != ImageStatus.INGESTED,
-                )
-                .count()
-            )
-
-            if job:
-                job.progress = done_count
-                db.commit()
-
-            if done_count >= len(image_ids):
-                break
-
-            time.sleep(poll_interval)
-
-        # Count outcomes
-        failed_count = (
-            db.query(Image)
-            .filter(Image.id.in_(image_id_set), Image.status == ImageStatus.FAILED)
-            .count()
-        )
-        succeeded = len(image_ids) - failed_count
-
-        job = db.query(Job).filter(Job.id == job_id).first()
-        if job:
-            job.completed_at = datetime.utcnow()
-            job.result = {
-                "total": len(image_ids),
-                "queued": queued,
-                "succeeded": succeeded,
-                "failed": failed_count,
-                "image_ids": image_ids,
-                "dispatched": True,
-            }
-            if failed_count >= len(image_ids):
-                job.status = JobStatus.FAILED
-                job.error_message = f"All {failed_count} images failed"
-            elif failed_count > 0:
-                job.status = JobStatus.COMPLETED
-                job.error_message = f"{failed_count}/{len(image_ids)} images failed"
-            else:
-                job.status = JobStatus.COMPLETED
-            db.commit()
+        job = db.query(Job).filter(Job.id == job_id).with_for_update().populate_existing().first()
+        finished = bool(job) and reconcile_batch(db, job)
+        db.commit()
 
         elapsed = (time.monotonic() - task_start) * 1000
         write_log(category=LogCategory.TASK,
-                  message=f"Task run_batch_describe completed in {elapsed:.0f}ms ({succeeded} succeeded, {failed_count} failed)",
+                  message=f"Task run_batch_describe dispatched {queued} images in {elapsed:.0f}ms",
                   task_name="run_batch_describe", job_id=job_id, duration_ms=round(elapsed, 1), user_id=user_id)
-        return {"status": "success", "total": len(image_ids), "succeeded": succeeded, "failed": failed_count}
+        return {"status": "dispatched", "total": len(image_ids), "queued": queued, "finished": finished}
 
     except Exception as e:
         # A failed SQL transaction must be rolled back before recording failure.
