@@ -30,6 +30,7 @@ celery_app = Celery(
     include=[
         "app.workers.tasks",
         "app.workers.load_timing_tasks",
+        "app.workers.billing_metrics_tasks",
         "app.workers.generation_tasks",
     ],
 )
@@ -130,6 +131,11 @@ celery_app.conf.update(
         "reconcile-payments": {
             "task": "app.workers.tasks.reconcile_payments",
             "schedule": 86400.0,  # once per day
+        },
+        "report-billing-metrics": {
+            # Cost/income metrics for the Sentry dashboards + margin guard alerts.
+            "task": "app.workers.billing_metrics_tasks.report_billing_metrics",
+            "schedule": 3600.0,  # every hour
         },
     },
 )
