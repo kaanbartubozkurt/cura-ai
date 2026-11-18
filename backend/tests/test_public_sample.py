@@ -111,3 +111,18 @@ def test_preview_serves_thumbnails_only(db, monkeypatch):
     for image_id, size in ((1, "original"), (3, "medium")):
         with pytest.raises(HTTPException):
             public.get_sample_preview(image_id, size, db=db)
+
+
+def test_prices_list_models_by_cost_and_skip_unpriced(monkeypatch):
+    from app.services import model_catalog
+
+    models = [SimpleNamespace(key="a", label="Model A"), SimpleNamespace(key="b", label="Model B"),
+              SimpleNamespace(key="c", label="Model C")]
+    monkeypatch.setattr(model_catalog, "image_models", lambda kind: models)
+    monkeypatch.setattr(model_catalog, "trainable_keys", lambda: ["a"])
+    costs = {("a", "edit"): 80.4, ("b", "edit"): 40.0, ("c", "edit"): None, ("a", "train"): 12800}
+    monkeypatch.setattr(public, "_price", lambda db, key, op: round(costs.get((key, op)) or 0) or None)
+    data = public.build_prices(None)
+    assert [r["key"] for r in data["edit"]] == ["b", "a"]  # cheapest first, unpriced left out
+    assert data["edit"][1]["sparks"] == 80
+    assert data["train"] == [{"key": "a", "label": "Model A", "sparks": 12800}]

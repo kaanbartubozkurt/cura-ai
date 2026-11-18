@@ -201,3 +201,45 @@ def get_sample_preview(image_id: int, size: str, resolve: bool = False, db: Sess
     # Public sample previews may be cached by browsers and CDNs for a few minutes.
     response.headers["Cache-Control"] = "public, max-age=300"
     return response
+
+
+_prices_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _price(db: Session, key: str, operation: str) -> int | None:
+    """Sparks for one run at the model's default settings (as shown before running in the app)."""
+    from app.services.cost_calculator import estimate_sparks, resolve_catalog_model
+
+    try:
+        provider, model, op = resolve_catalog_model("fal", key, operation)
+        sparks, _ = estimate_sparks(db, provider, model, op, generation_params={})
+    except Exception:
+        return None
+    return round(float(sparks)) if sparks else None
+
+
+def build_prices(db: Session) -> dict:
+    from app.services.model_catalog import image_models, trainable_keys
+
+    def rows(kind: str, operation: str) -> list[dict]:
+        found = [{"key": m.key, "label": m.label, "sparks": _price(db, m.key, operation)} for m in image_models(kind)]
+        return sorted((r for r in found if r["sparks"]), key=lambda r: r["sparks"])
+
+    labels = {m.key: m.label for m in image_models("generate")}
+    train = [{"key": k, "label": labels.get(k, k), "sparks": _price(db, k, "train")} for k in trainable_keys()]
+    return {
+        "edit": rows("edit", "edit"),
+        "generate": rows("generate", "generate"),
+        "train": [r for r in train if r["sparks"]],
+    }
+
+
+@router.get("/prices")
+def get_prices(db: Session = Depends(get_db)):
+    """Sparks per run for each offered model at default settings, for the pricing page."""
+    cached = _prices_cache.get("prices")
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+    data = build_prices(db)
+    _prices_cache["prices"] = (time.monotonic() + 300, data)
+    return data

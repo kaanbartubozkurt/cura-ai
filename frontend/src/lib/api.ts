@@ -67,6 +67,7 @@ import type {
   PaymentConfig,
   PayPalOutcome,
   SampleLibrary,
+  PublicPrices,
   AdminPurchase,
   ManualClaimListResponse,
   SubscriptionPlan,
@@ -1750,6 +1751,10 @@ export const historyApi = {
 export const publicApi = {
   getSample: async (): Promise<SampleLibrary> => {
     const { data } = await api.get('/public/sample');
+    return data;
+  },
+  getPrices: async (): Promise<PublicPrices> => {
+    const { data } = await api.get('/public/prices');
     return data;
   },
 };

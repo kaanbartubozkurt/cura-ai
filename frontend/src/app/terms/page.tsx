@@ -2,7 +2,7 @@
 
 import MarketingShell from '@/components/marketing/MarketingShell';
 
-const LAST_UPDATED = 'July 9, 2026';
+const LAST_UPDATED = 'November 18, 2026';
 
 export default function TermsPage() {
   return (
@@ -56,20 +56,20 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2>5. Sparks, payments, and refunds</h2>
+            <h2>5. Sparks and payments</h2>
             <p className="mt-2">
               Paid features are metered in <strong>sparks</strong>, a prepaid credit. Sparks are
-              purchased as one-time packs or granted monthly through subscriptions. Payments are
-              processed by our merchant of record, Lemon Squeezy, LLC, whose own terms apply to the
-              payment transaction. Prices are shown at checkout.
+              sold as one-time packs; there are no subscriptions or recurring charges. SightLab is
+              the seller, and payments are processed by PayPal, whose own terms apply to the payment
+              transaction. Prices are shown before you pay.
             </p>
             <ul className="mt-2 list-disc pl-6 space-y-1">
-              <li>Pack sparks do not expire. Subscription sparks refresh each billing period.</li>
-              <li>Subscriptions renew automatically and can be cancelled anytime, effective at the end of the current period.</li>
+              <li>Sparks do not expire.</li>
+              <li>All purchases are final. We do not offer refunds.</li>
               <li>
-                Refunds: unused pack purchases are refundable within 14 days. Once sparks from a
-                purchase have been spent, that purchase is refundable only at our discretion,
-                prorated to the unused balance.
+                If a payment is reversed (for example, through a chargeback or a PayPal dispute), the
+                sparks from that purchase are removed from your balance. Your balance may then be
+                negative, and paid operations need a top-up before they run again.
               </li>
             </ul>
           </section>
