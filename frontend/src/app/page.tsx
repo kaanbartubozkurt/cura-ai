@@ -151,6 +151,28 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <section aria-labelledby="cloud" className="border-t border-border">
+        <div className="mx-auto max-w-6xl px-6 py-16">
+          <h2 id="cloud" className="text-2xl font-bold tracking-tight sm:text-3xl">Nothing to install. No GPU needed.</h2>
+          <p className="mt-3 max-w-2xl text-muted-foreground">
+            Unlike local setups such as ComfyUI or Stable Diffusion on your own machine, SightLab runs entirely on cloud
+            services. Open it in a browser on a laptop, tablet or phone and every model is ready.
+          </p>
+          <div className="mt-8 grid gap-3 sm:grid-cols-3">
+            {[
+              ['No hardware', 'Models run on cloud GPUs, not your computer. No VRAM limits, no fans spinning.'],
+              ['No setup', 'No Python, model downloads, node graphs or updates to manage. New models just appear.'],
+              ['Your library goes with you', 'Images, descriptions and results are stored in the cloud and open from any device.'],
+            ].map(([title, text]) => (
+              <div key={title} className="rounded-xl border border-border p-5">
+                <p className="font-semibold">{title}</p>
+                <p className="mt-1.5 text-sm text-muted-foreground">{text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section aria-labelledby="pricing" className="bg-zinc-900 text-white">
         <div className="mx-auto max-w-6xl px-6 py-20">
           <h2 id="pricing" className="text-3xl font-bold tracking-tight sm:text-4xl">One balance for every model</h2>
@@ -197,6 +219,7 @@ export default function LandingPage() {
           {[
             ['Who owns my images and results?', 'You do. Your library is private to your account. An image is sent only to the model you choose, when you run it.'],
             ['Which models can I use?', 'For editing: GPT Image, Nano Banana, FLUX, Kling, Ideogram and more. For describing: several vision models. New models are added as they come out.'],
+            ['Do I need a GPU or to install anything?', 'No. Everything runs on cloud services, so a browser is all you need, on any computer, tablet or phone. There is nothing to download or keep updated.'],
             ['How does pricing work?', 'Each run costs sparks, shown before you run it. Buy packs with PayPal or a card. No subscription, and sparks never expire.'],
           ].map(([q, a]) => (
             <details key={q} className="border-b border-border py-4">

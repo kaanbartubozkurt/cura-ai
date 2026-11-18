@@ -11,6 +11,7 @@ import ModelSelector from '@/components/ModelSelector';
 import type { GenerationConfig, ProviderConfig, TrainingConfig } from '@/types';
 import { Slider } from '@/components/Slider';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
+import NotificationSettings from '@/components/NotificationSettings';
 
 function PromptSuggest({
   promptType,
@@ -132,11 +133,24 @@ function AutoTextarea({
   );
 }
 
-type SettingsTab = 'general' | 'prompts' | 'models';
+type SettingsTab = 'general' | 'notifications' | 'prompts' | 'models';
+const TABS: SettingsTab[] = ['general', 'notifications', 'prompts', 'models'];
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  // Deep links such as /settings?tab=notifications (the old /notifications page).
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab') as SettingsTab | null;
+    if (requested && TABS.includes(requested)) setActiveTab(requested);
+  }, []);
+  const selectTab = (tab: SettingsTab) => {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    if (tab === 'general') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', tab);
+    window.history.replaceState(null, '', url);
+  };
 
   const { data: presets } = useQuery({
     queryKey: ['presets'],
@@ -254,12 +268,13 @@ export default function SettingsPage() {
         <div className="flex flex-wrap gap-1 bg-muted rounded-lg p-1 mt-4 w-fit">
           {([
             { key: 'general', label: 'General' },
+            { key: 'notifications', label: 'Notifications' },
             { key: 'prompts', label: 'Prompt library' },
             { key: 'models', label: 'Default models' },
           ] as const).map(({ key, label }) => (
             <button
               key={key}
-              onClick={() => setActiveTab(key)}
+              onClick={() => selectTab(key)}
               aria-pressed={activeTab === key}
               className={cn(
                 'px-3 py-1 text-sm rounded-md transition-colors',
@@ -273,6 +288,8 @@ export default function SettingsPage() {
       </div>
 
       {activeTab === 'general' && <AppearanceSettings />}
+
+      {activeTab === 'notifications' && <NotificationSettings />}
 
       {activeTab === 'prompts' && (
       <section className="rounded-lg border border-border bg-background p-4 sm:p-6">

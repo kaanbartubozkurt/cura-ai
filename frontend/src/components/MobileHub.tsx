@@ -97,8 +97,7 @@ export default function MobileHub({ kind }: { kind: 'collection' | 'studio' | 'a
         <>
           <Row href="/billing" title="Billing" />
           <Row href="/jobs" title="Jobs and activity" />
-          <Row href="/notifications" title="Notifications" />
-          <Row href="/settings" title="Settings" />
+          <Row href="/settings" title="Settings and notifications" />
           <Row href={DISCORD_INVITE_URL} title="Join our Discord" external />
           {user?.role === 'admin' && <Row href="/admin" title="Admin" />}
           {user?.role === 'admin' && <Row href="/debug" title="Debug" />}
