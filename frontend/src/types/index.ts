@@ -1081,3 +1081,35 @@ export interface ModelCatalog {
   training_base_models: { key: string; label: string }[];
   defaults: { vision_model: string; language_model: string; generation_model: string; edit_model: string };
 }
+
+/** Public sample library (GET /public/sample): one folder, readable without an account. */
+export interface SampleEdit {
+  id: number;
+  model: string;
+  model_label: string;
+  prompt: string;
+  width: number | null;
+  height: number | null;
+  thumb: string;
+  large: string;
+}
+
+export interface SampleImage {
+  id: number;
+  width: number | null;
+  height: number | null;
+  description: string | null;
+  tags: string[];
+  cluster_ids: number[];
+  thumb: string;
+  large: string;
+}
+
+export interface SampleLibrary {
+  configured: boolean;
+  name?: string;
+  images: SampleImage[];
+  clusters: { id: number; title: string; count: number; image_ids: number[] }[];
+  /** Edits made from each sample image, keyed by its id. */
+  edits: Record<string, SampleEdit[]>;
+}

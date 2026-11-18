@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     paypal_webhook_id: str = ""
     paypal_mode: str = "sandbox"
 
+    # Public sample library (/sample and the landing page): the one folder whose
+    # images, descriptions, clusters and edits anyone may see. 0 turns it off.
+    sample_library_folder_id: int = 0
+
     # Manual PayPal purchases (interim flow while LS approval is pending).
     # Empty URL hides the manual purchase option in the UI.
     paypal_me_url: str = ""

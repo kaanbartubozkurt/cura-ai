@@ -4,7 +4,7 @@ SightLab organizes large image libraries with AI and lets you create and edit im
 
 ## Try it live
 
-**SightLab is running at [sightlab.org](https://sightlab.org).** You don't need to install anything. Sign up with Google or email and you start with 500 free sparks (1 spark = $0.001) to try tagging, search, image generation and editing. More sparks can be bought from the Billing page with PayPal or any debit or credit card.
+**SightLab is running at [sightlab.org](https://sightlab.org).** You don't need to install anything. Sign up with Google or email and you start with 500 free sparks (1 spark = $0.001) to try tagging, search, image generation and editing. More sparks can be bought from the Billing page with PayPal or any debit or credit card. To see what it does before signing up, browse the [sample library](https://sightlab.org/sample).
 
 The rest of this README covers how SightLab works and how to run it yourself.
 

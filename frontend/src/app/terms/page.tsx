@@ -115,8 +115,8 @@ export default function TermsPage() {
             <h2>10. Contact</h2>
             <p className="mt-2">
               Questions about these Terms:{' '}
-              <a href="mailto:stuart.leal23@gmail.com" className="underline hover:text-foreground">
-                stuart.leal23@gmail.com
+              <a href="mailto:team@sightlab.org" className="underline hover:text-foreground">
+                team@sightlab.org
               </a>
             </p>
           </section>
