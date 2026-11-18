@@ -16,7 +16,7 @@ import {
   useEffect,
   useMemo,
 } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import { editApi, settingsApi, billingApi } from '@/lib/api';
 import { Loader2, Repeat2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -122,6 +122,9 @@ function EditPageInner() {
   const [describePrompt, setDescribePrompt] = useState('');
   const [negativePrompt, setNegativePrompt] = useState('');
   const [editModel, setEditModel] = useState('');
+  // Describe: other models to run the same edit on (one result each), for comparison.
+  const [compare, setCompare] = useState<string[]>([]);
+  const [compareOpen, setCompareOpen] = useState(false);
   const [quality, setQuality] = useState('');
   const { data: catalog } = useModelCatalog();
   const EDIT_MODELS = useMemo(
@@ -183,6 +186,17 @@ function EditPageInner() {
     queryFn: () => billingApi.estimateGenerationCost(estimateParams),
     enabled: !!model,
   });
+  // Comparison runs: one result each at the model's default settings.
+  const compareEstimates = useQueries({
+    queries: compare.map((key) => ({
+      queryKey: ['edit-estimate', { base_model: key, operation: 'edit' }],
+      queryFn: () => billingApi.estimateGenerationCost({ base_model: key, operation: 'edit' as const }),
+      enabled: job === 'describe',
+    })),
+  });
+  const compareCost = job === 'describe'
+    ? compareEstimates.reduce((sum, query) => sum + (query.data?.estimated_sparks ?? 0), 0)
+    : 0;
 
   // Initialize edit model from settings
   useEffect(() => {
@@ -729,6 +743,39 @@ function EditPageInner() {
     },
   });
 
+  const compareOptions = (catalog?.edit ?? []).filter(
+    (item) => item.jobs.includes('describe') && item.key !== editModel
+  );
+  useEffect(() => {
+    setCompare((current) => current.filter((key) => key !== editModel));
+  }, [editModel]);
+
+  // The same edit on each comparison model, with that model's prompt wording and defaults.
+  const runCompare = async (base: Parameters<typeof editApi.edit>[0]) => {
+    const keys = compare.filter((key) => {
+      const item = catalog?.edit.find((m) => m.key === key);
+      return item && (item.max_source_images ?? 1) >= sources.length;
+    });
+    if (!keys.length) return;
+    const results = await Promise.allSettled(
+      keys.map((key) =>
+        editApi.edit({
+          edit_model: key,
+          num_images: 1,
+          prompt: translatePrompt(describePrompt, sources, key).trim(),
+          ordered_sources: base.ordered_sources,
+        })
+      )
+    );
+    const label = (key: string) => catalog?.edit.find((m) => m.key === key)?.label ?? key;
+    const failed = keys.filter((_, i) => results[i].status === 'rejected');
+    if (failed.length) toast.error(`Couldn't start on ${failed.map(label).join(', ')}`);
+    const started = keys.filter((_, i) => results[i].status === 'fulfilled');
+    if (started.length) toast.success(`Also running on ${started.map(label).join(', ')}`);
+    queryClient.invalidateQueries({ queryKey: ['edited-images'] });
+    queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  };
+
   const handleEdit = async () => {
     if (!sentPrompt.trim()) {
       toast.error('Please enter a prompt');
@@ -828,7 +875,10 @@ function EditPageInner() {
       } finally {
         setUploading(false);
       }
-    } else editMutation.mutate(params);
+    } else {
+      editMutation.mutate(params);
+      if (job === 'describe' && compare.length) void runCompare(params);
+    }
   };
 
   const maxSources = caps.maxSources;
@@ -1119,6 +1169,59 @@ function EditPageInner() {
             </option>
           ))}
       </select>
+      {job === 'describe' && compareOptions.length > 0 && (
+        <span className="relative">
+          <button
+            type="button"
+            aria-expanded={compareOpen}
+            aria-haspopup="true"
+            onClick={() => setCompareOpen((open) => !open)}
+            className={cn(
+              'rounded border px-2 py-1',
+              compare.length ? 'border-selection bg-selection-soft text-selection' : 'bg-background'
+            )}
+          >
+            {compare.length ? `Compare: +${compare.length} model${compare.length > 1 ? 's' : ''}` : 'Compare with…'}
+          </button>
+          {compareOpen && (
+            <>
+              <span className="fixed inset-0 z-40" onClick={() => setCompareOpen(false)} aria-hidden="true" />
+              <span
+                role="group"
+                aria-label="Also run on"
+                className="absolute bottom-full left-0 z-50 mb-2 flex max-h-80 w-64 flex-col gap-1 overflow-y-auto rounded-md border border-border bg-background p-2 text-sm shadow-lg"
+              >
+                <span className="px-1 pb-1 text-xs text-muted-foreground">
+                  Also run this edit on (1 result each, up to 3):
+                </span>
+                {compareOptions.map((item) => {
+                  const tooFew = (item.max_source_images ?? 1) < sources.length;
+                  const checked = compare.includes(item.key);
+                  return (
+                    <label
+                      key={item.key}
+                      className={cn('flex min-h-8 items-center gap-2 rounded px-1', tooFew ? 'opacity-50' : 'cursor-pointer hover:bg-accent')}
+                      title={tooFew ? `Takes up to ${item.max_source_images ?? 1} source image(s)` : undefined}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={tooFew || (!checked && compare.length >= 3)}
+                        onChange={() =>
+                          setCompare((current) =>
+                            checked ? current.filter((key) => key !== item.key) : [...current, item.key]
+                          )
+                        }
+                      />
+                      <span className="flex-1">{item.label}</span>
+                    </label>
+                  );
+                })}
+              </span>
+            </>
+          )}
+        </span>
+      )}
       <select
         aria-label="Results"
         className="rounded border bg-background px-2 py-1"
@@ -1680,8 +1783,11 @@ function EditPageInner() {
             }
             cost={
               estimate?.estimated_sparks != null
-                ? estimate.estimated_sparks *
-                  (job === 'subject' && resultType === 'series' ? 1 : numImages)
+                ? Math.round(
+                    estimate.estimated_sparks *
+                      (job === 'subject' && resultType === 'series' ? 1 : numImages) +
+                      compareCost
+                  )
                 : undefined
             }
           />
