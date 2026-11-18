@@ -676,6 +676,8 @@ export interface PaymentConfig {
   automated: boolean;
   /** Automated checkout provider: 'paypal', 'lemon_squeezy' or 'mock'. */
   provider?: string | null;
+  /** PayPal's public client id, for its buttons on the checkout page. */
+  paypal_client_id?: string | null;
   manual_enabled: boolean;
   paypal_me_url: string;
 }

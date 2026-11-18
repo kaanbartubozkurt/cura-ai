@@ -463,8 +463,14 @@ class PayPalGateway(PaymentGateway):
         user_email: str,
         success_url: str,
         cancel_url: str,
+        flow: str = "redirect",
     ) -> CheckoutResult:
+        """Create the order. ``flow="redirect"`` sends the buyer to PayPal and back;
+        ``flow="sdk"`` is for PayPal's buttons on our own checkout page (no return URLs)."""
         sparks = pack.sparks_amount + pack.bonus_sparks
+        experience = {"brand_name": "SightLab", "user_action": "PAY_NOW", "shipping_preference": "NO_SHIPPING"}
+        if flow == "redirect":
+            experience.update({"return_url": success_url, "cancel_url": cancel_url})
         body = {
             "intent": "CAPTURE",
             "purchase_units": [{
@@ -474,17 +480,18 @@ class PayPalGateway(PaymentGateway):
                 "description": f"SightLab {pack.name} pack: {sparks:,} sparks",
                 "amount": {"currency_code": pack.currency, "value": cents_to_value(pack.price_cents)},
             }],
-            "payment_source": {"paypal": {"experience_context": {
-                "brand_name": "SightLab",
-                "user_action": "PAY_NOW",
-                "shipping_preference": "NO_SHIPPING",
-                "return_url": success_url,
-                "cancel_url": cancel_url,
-            }}},
         }
+        if flow == "redirect":
+            body["payment_source"] = {"paypal": {"experience_context": experience}}
+        else:
+            # The JS SDK picks the payment source (PayPal or card); this keeps the
+            # brand name and stops PayPal from asking for a shipping address.
+            body["application_context"] = experience
         order = await self._request("POST", "/v2/checkout/orders", body, request_id=f"order-{purchase_id}")
         approve = next((link["href"] for link in order.get("links", [])
                         if link.get("rel") in ("payer-action", "approve")), None)
+        if flow == "sdk":
+            return CheckoutResult(checkout_url=approve or "", provider_session_id=order["id"])
         if not approve:
             raise PayPalError("PayPal returned no approval link")
         return CheckoutResult(checkout_url=approve, provider_session_id=order["id"])

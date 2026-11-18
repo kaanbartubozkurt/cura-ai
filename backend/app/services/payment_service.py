@@ -113,8 +113,9 @@ class PaymentService:
         success_url: str,
         cancel_url: str,
         ip_address: str | None = None,
+        flow: str = "redirect",
     ) -> dict:
-        """Create a checkout session and return the checkout URL."""
+        """Create a checkout session and return the checkout URL (and the provider's order id)."""
         if self.user_id is None:
             raise ValueError("user_id is required for checkout")
 
@@ -146,6 +147,7 @@ class PaymentService:
         self.db.refresh(txn)
 
         try:
+            extra = {"flow": flow} if gateway.name == self.PAYPAL else {}
             result = await gateway.create_checkout_session(
                 pack=pack,
                 purchase_id=purchase_id,
@@ -153,6 +155,7 @@ class PaymentService:
                 user_email=user_email,
                 success_url=success_url,
                 cancel_url=cancel_url,
+                **extra,
             )
         except Exception:
             # Nothing was charged; don't let the attempt count against the hourly limit.
@@ -189,6 +192,7 @@ class PaymentService:
         return {
             "checkout_url": result.checkout_url,
             "purchase_id": str(purchase_id),
+            "order_id": result.provider_session_id,
         }
 
     # --- Manual PayPal claims (interim flow while LS approval is pending) ---
@@ -211,9 +215,12 @@ class PaymentService:
         # The manual paypal.me claim form is only a fallback for when no
         # automated checkout is configured.
         manual = bool(settings.paypal_me_url) and not automated
+        paypal = provider == self.PAYPAL
         return {
             "automated": automated,
             "provider": provider,
+            # Public by design: PayPal's buttons on our checkout page need it.
+            "paypal_client_id": settings.paypal_client_id if paypal else None,
             "manual_enabled": manual,
             "paypal_me_url": settings.paypal_me_url if manual else "",
         }

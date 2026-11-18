@@ -294,3 +294,30 @@ def test_return_address_must_be_one_of_our_sites():
     assert _safe_return_url("http://localhost:3000/billing?paypal=return", "x").startswith("http://localhost")
     with pytest.raises(HTTPException):
         _safe_return_url("https://evil.example/steal", "x")
+
+
+def test_checkout_page_flow_returns_the_order_id_without_return_urls(db, paypal):
+    result = asyncio.run(PaymentService(db, 1).create_checkout(
+        pack_id=2, user_email="buyer@example.test", success_url="https://sightlab.org/billing",
+        cancel_url="https://sightlab.org/billing", flow="sdk",
+    ))
+    body = paypal.calls[0][2]
+    assert result["order_id"] == ORDER_ID
+    assert "payment_source" not in body
+    assert body["application_context"]["shipping_preference"] == "NO_SHIPPING"
+    assert "return_url" not in body["application_context"]
+    asyncio.run(PaymentService(db, 1).capture_paypal_order(ORDER_ID))
+    assert balance(db) == 22000
+
+
+def test_redirect_flow_still_sends_return_urls(db, paypal):
+    start_checkout(db)
+    context = paypal.calls[0][2]["payment_source"]["paypal"]["experience_context"]
+    assert context["return_url"] == "https://sightlab.org/billing?paypal=return"
+
+
+def test_payment_config_exposes_the_public_client_id_only_for_paypal(db, paypal, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "paypal_client_id", "public-client-id")
+    assert PaymentService(db).get_payment_config()["paypal_client_id"] == "public-client-id"

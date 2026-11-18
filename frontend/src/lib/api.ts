@@ -1612,11 +1612,14 @@ export const billingApi = {
     return data;
   },
 
-  createCheckout: async (packId: number, successUrl?: string, cancelUrl?: string): Promise<{ checkout_url: string; purchase_id: string }> => {
+  createCheckout: async (
+    packId: number, successUrl?: string, cancelUrl?: string, flow: 'redirect' | 'sdk' = 'redirect',
+  ): Promise<{ checkout_url: string; purchase_id: string; order_id: string | null }> => {
     const { data } = await api.post('/billing/checkout', {
       pack_id: packId,
       success_url: successUrl,
       cancel_url: cancelUrl,
+      flow,
     });
     return data;
   },
