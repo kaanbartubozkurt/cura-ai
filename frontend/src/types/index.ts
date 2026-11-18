@@ -1115,3 +1115,16 @@ export interface SampleLibrary {
   /** Edits made from each sample image, keyed by its id. */
   edits: Record<string, SampleEdit[]>;
 }
+
+/** GET /public/prices: sparks per run at default settings, cheapest first. */
+export interface ModelPrice {
+  key: string;
+  label: string;
+  sparks: number;
+}
+
+export interface PublicPrices {
+  edit: ModelPrice[];
+  generate: ModelPrice[];
+  train: ModelPrice[];
+}
