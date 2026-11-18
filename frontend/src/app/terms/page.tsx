@@ -56,7 +56,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2>5. Sparks, payments, and refunds</h2>
+            <h2>5. Sparks and payments</h2>
             <p className="mt-2">
               Paid features are metered in <strong>sparks</strong>, a prepaid credit. Sparks are
               sold as one-time packs; there are no subscriptions or recurring charges. SightLab is
@@ -65,15 +65,11 @@ export default function TermsPage() {
             </p>
             <ul className="mt-2 list-disc pl-6 space-y-1">
               <li>Sparks do not expire.</li>
+              <li>All purchases are final. We do not offer refunds.</li>
               <li>
-                Refunds: unused pack purchases are refundable within 14 days. Once sparks from a
-                purchase have been spent, that purchase is refundable only at our discretion,
-                prorated to the unused balance. Refunds go back to the PayPal account or card that paid.
-              </li>
-              <li>
-                If a payment is refunded or reversed (for example, through a chargeback or a PayPal
-                dispute), the sparks from that purchase are removed from your balance. Your balance may
-                then be negative, and paid operations need a top-up before they run again.
+                If a payment is reversed (for example, through a chargeback or a PayPal dispute), the
+                sparks from that purchase are removed from your balance. Your balance may then be
+                negative, and paid operations need a top-up before they run again.
               </li>
             </ul>
           </section>

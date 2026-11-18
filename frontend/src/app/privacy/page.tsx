@@ -18,7 +18,7 @@ export default function PrivacyPage() {
               <li><strong>Account data</strong> — email address, display name, and password hash (or Google account identifier if you sign in with Google).</li>
               <li><strong>Content</strong> — images you upload, models you train, prompts you write, and images you generate or edit.</li>
               <li><strong>Usage data</strong> — operations you run, credits spent, and technical logs (request identifiers, timestamps, errors) used to operate and debug the Service.</li>
-              <li><strong>Payment data</strong> — payments are processed by PayPal. We never see or store your card number or PayPal login; we keep only what we need to add sparks and handle refunds (amount, pack, status and PayPal&apos;s transaction identifiers).</li>
+              <li><strong>Payment data</strong> — payments are processed by PayPal. We never see or store your card number or PayPal login; we keep only what we need to add sparks and handle payment disputes (amount, pack, status and PayPal&apos;s transaction identifiers).</li>
             </ul>
           </section>
 
