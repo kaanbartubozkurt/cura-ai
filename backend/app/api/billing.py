@@ -1508,11 +1508,15 @@ class CheckoutRequest(BaseModel):
     pack_id: int
     success_url: str | None = None
     cancel_url: str | None = None
+    # "redirect": send the buyer to the provider and back. "sdk": PayPal's buttons
+    # on our checkout page create the order through this call and need its id.
+    flow: Literal["redirect", "sdk"] = "redirect"
 
 
 class CheckoutResponse(BaseModel):
     checkout_url: str
     purchase_id: str
+    order_id: str | None = None
 
 
 class PurchaseItem(BaseModel):
@@ -1589,6 +1593,7 @@ async def create_checkout(
             user_email=current_user.email,
             success_url=_safe_return_url(body.success_url, "http://localhost:3000/billing?purchase=success"),
             cancel_url=_safe_return_url(body.cancel_url, "http://localhost:3000/billing"),
+            flow=body.flow,
         )
         return CheckoutResponse(**result)
     except PayPalError as e:
@@ -1645,6 +1650,7 @@ def cancel_paypal_order(
 class PaymentConfigResponse(BaseModel):
     automated: bool
     provider: str | None = None
+    paypal_client_id: str | None = None
     manual_enabled: bool
     paypal_me_url: str
 

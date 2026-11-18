@@ -351,6 +351,12 @@ export default function BillingPage() {
       return;
     }
 
+    // PayPal: review the order and pay on our own checkout page.
+    if (isPayPal) {
+      router.push(`/billing/checkout?pack=${packId}`);
+      return;
+    }
+
     setBuyingPackId(packId);
     try {
       const currentUrl = window.location.origin + '/billing';
@@ -559,7 +565,7 @@ export default function BillingPage() {
                 pack={pack}
                 onBuy={handleBuy}
                 loading={buyingPackId === pack.id}
-                loadingLabel={isPayPal ? 'Opening PayPal…' : undefined}
+                loadingLabel={undefined}
               />
             ))}
           </div>
