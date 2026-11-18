@@ -25,7 +25,7 @@ export default function MarketingShell({ children }: { children: React.ReactNode
             </Link>
             {isAuthenticated ? (
               <Link
-                href="/generate"
+                href="/images"
                 className="rounded-full bg-primary px-4 py-2 text-primary-foreground font-medium hover:opacity-90 transition-opacity"
               >
                 Open app
