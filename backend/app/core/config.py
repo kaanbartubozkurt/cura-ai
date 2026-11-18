@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     lemon_squeezy_webhook_secret: str = ""
     lemon_squeezy_store_id: str = ""
 
+    # Automated PayPal Checkout (Orders v2, #167). Used when client id and
+    # secret are set. paypal_mode picks the sandbox or live PayPal API;
+    # paypal_webhook_id verifies that notifications really come from PayPal.
+    paypal_client_id: str = ""
+    paypal_client_secret: str = ""
+    paypal_webhook_id: str = ""
+    paypal_mode: str = "sandbox"
+
     # Manual PayPal purchases (interim flow while LS approval is pending).
     # Empty URL hides the manual purchase option in the UI.
     paypal_me_url: str = ""

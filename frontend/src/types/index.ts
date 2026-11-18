@@ -639,10 +639,32 @@ export interface Purchase {
   pack_name: string;
   sparks_amount: number;
   amount_cents: number;
+  refunded_amount_cents?: number;
   currency: string;
+  provider?: string | null;
+  /** PayPal capture id (the "Transaction ID" PayPal shows the buyer). */
+  payment_reference?: string | null;
   status: string;
   created_at: string;
   completed_at: string | null;
+}
+
+export interface AdminPurchase extends Purchase {
+  user_id: number;
+  user_email: string;
+  refundable: boolean;
+}
+
+/** What happened when the buyer came back from PayPal. */
+export interface PayPalOutcome {
+  status: 'completed' | 'pending' | 'declined' | 'cancelled' | 'not_approved' | 'refunded' | 'disputed' | 'failed' | 'expired';
+  purchase_id: string;
+  pack_name: string;
+  sparks: number;
+  amount_cents: number;
+  currency: string;
+  payment_reference: string | null;
+  reason?: string | null;
 }
 
 export interface PurchaseListResponse {
@@ -652,6 +674,8 @@ export interface PurchaseListResponse {
 
 export interface PaymentConfig {
   automated: boolean;
+  /** Automated checkout provider: 'paypal', 'lemon_squeezy' or 'mock'. */
+  provider?: string | null;
   manual_enabled: boolean;
   paypal_me_url: string;
 }
