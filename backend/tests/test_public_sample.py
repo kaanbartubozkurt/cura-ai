@@ -119,10 +119,10 @@ def test_prices_list_models_by_cost_and_skip_unpriced(monkeypatch):
     models = [SimpleNamespace(key="a", label="Model A"), SimpleNamespace(key="b", label="Model B"),
               SimpleNamespace(key="c", label="Model C")]
     monkeypatch.setattr(model_catalog, "image_models", lambda kind: models)
-    monkeypatch.setattr(model_catalog, "trainable_keys", lambda: ["a"])
-    costs = {("a", "edit"): 80.4, ("b", "edit"): 40.0, ("c", "edit"): None, ("a", "train"): 12800}
+    monkeypatch.setattr(model_catalog, "trainable_keys", lambda: ["a", "b"])
+    costs = {("a", "edit"): 80.4, ("b", "edit"): 40.0, ("c", "edit"): None, ("a", "train"): 12800, ("b", "train"): 3800}
     monkeypatch.setattr(public, "_price", lambda db, key, op: round(costs.get((key, op)) or 0) or None)
     data = public.build_prices(None)
     assert [r["key"] for r in data["edit"]] == ["b", "a"]  # cheapest first, unpriced left out
     assert data["edit"][1]["sparks"] == 80
-    assert data["train"] == [{"key": "a", "label": "Model A", "sparks": 12800}]
+    assert [r["sparks"] for r in data["train"]] == [3800, 12800]  # "train from" uses the cheapest

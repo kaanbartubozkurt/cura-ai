@@ -230,7 +230,7 @@ def build_prices(db: Session) -> dict:
     return {
         "edit": rows("edit", "edit"),
         "generate": rows("generate", "generate"),
-        "train": [r for r in train if r["sparks"]],
+        "train": sorted((r for r in train if r["sparks"]), key=lambda r: r["sparks"]),
     }
 
 
