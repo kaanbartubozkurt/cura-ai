@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import api_router
+from app.api.webhooks import paypal_router as paypal_webhooks_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import get_settings
 from app.core.logging_config import configure_logging
@@ -52,6 +53,7 @@ app.include_router(api_router, prefix="/api")
 
 # Webhook routes (no /api prefix — external providers call these directly)
 app.include_router(webhooks_router)
+app.include_router(paypal_webhooks_router)
 
 
 @app.get("/")

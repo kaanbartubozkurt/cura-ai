@@ -4,7 +4,7 @@ SightLab organizes large image libraries with AI and lets you create and edit im
 
 ## Try it live
 
-**SightLab is running at [sightlab.org](https://sightlab.org).** You don't need to install anything. Sign up with Google or email and you start with 500 free sparks (1 spark = $0.001) to try tagging, search, image generation and editing. More sparks can be bought from the Billing page.
+**SightLab is running at [sightlab.org](https://sightlab.org).** You don't need to install anything. Sign up with Google or email and you start with 500 free sparks (1 spark = $0.001) to try tagging, search, image generation and editing. More sparks can be bought from the Billing page with PayPal or any debit or credit card.
 
 The rest of this README covers how SightLab works and how to run it yourself.
 
@@ -40,7 +40,7 @@ All tools share a canvas, a prompt box at the bottom, and settings on the right.
 Every created or edited image keeps a permanent record of its prompt, model, settings and input images. Open an image in the library to see it under **How it was made**. The record survives even if its inputs, LoRA or model are later deleted or retired; deleted inputs are kept as low-resolution copies.
 
 ### Sparks and billing
-Every AI operation is metered in sparks. You see an estimate before running, and the Billing page shows your balance, usage and transactions. Admins manage pricing, user balances and billing logs from the Admin page.
+Every AI operation is metered in sparks. You see an estimate before running, and the Billing page shows your balance, usage, transactions and purchases. Spark packs are paid through PayPal checkout (PayPal balance or any card, no PayPal account needed) and the sparks are added as soon as PayPal confirms the payment. Admins manage pricing, user balances and billing logs from the Admin page.
 
 ### Phone and desktop
 SightLab works on laptops and wide screens, and has a phone layout with three areas: **Collection**, **Studio** and **Account**.

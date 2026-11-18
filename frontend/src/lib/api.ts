@@ -65,6 +65,8 @@ import type {
   SparkPack,
   PurchaseListResponse,
   PaymentConfig,
+  PayPalOutcome,
+  AdminPurchase,
   ManualClaimListResponse,
   SubscriptionPlan,
   UserSubscription,
@@ -1619,6 +1621,28 @@ export const billingApi = {
 
   getPurchases: async (skip = 0, limit = 50): Promise<PurchaseListResponse> => {
     const { data } = await api.get('/billing/purchases', { params: { skip, limit } });
+    return data;
+  },
+
+  // --- PayPal Checkout: the buyer is back from PayPal ---
+
+  capturePayPal: async (orderId: string): Promise<PayPalOutcome> => {
+    const { data } = await api.post('/billing/paypal/capture', { order_id: orderId });
+    return data;
+  },
+
+  cancelPayPal: async (orderId: string): Promise<PayPalOutcome> => {
+    const { data } = await api.post('/billing/paypal/cancel', { order_id: orderId });
+    return data;
+  },
+
+  adminPurchases: async (skip = 0, limit = 50): Promise<{ items: AdminPurchase[]; total: number }> => {
+    const { data } = await api.get('/billing/admin/purchases', { params: { skip, limit } });
+    return data;
+  },
+
+  adminRefund: async (paymentId: number): Promise<{ status: string; sparks_removed?: number }> => {
+    const { data } = await api.post(`/billing/admin/refund/${paymentId}`);
     return data;
   },
 

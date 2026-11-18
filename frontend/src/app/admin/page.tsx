@@ -102,6 +102,25 @@ export default function AdminPage() {
     refetchInterval: 60000,
   });
 
+  const { data: purchases, isLoading: purchasesLoading } = useQuery({
+    queryKey: ['billing', 'admin', 'purchases'],
+    queryFn: () => billingApi.adminPurchases(),
+    enabled: isAdmin,
+    refetchInterval: 60000,
+  });
+
+  const refundMutation = useMutation({
+    mutationFn: (id: number) => billingApi.adminRefund(id),
+    onSuccess: (data) => {
+      toast.success(`Refunded${data.sparks_removed ? ` — ${formatNumber(data.sparks_removed)} sparks removed` : ''}`);
+      queryClient.invalidateQueries({ queryKey: ['billing', 'admin', 'purchases'] });
+    },
+    onError: (err) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Refund failed';
+      toast.error(msg);
+    },
+  });
+
   const approveClaimMutation = useMutation({
     mutationFn: (id: number) => billingApi.adminApproveManualClaim(id),
     onSuccess: (data) => {
@@ -352,7 +371,72 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* Payments Tab - Manual PayPal claims */}
+      {/* Payments Tab - Purchases (PayPal Checkout) and manual PayPal claims */}
+      {activeTab === 'payments' && (
+      <section className="mb-8">
+        <h2 className="text-lg font-semibold mb-1">Purchases</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Refunding returns the full amount through PayPal and removes the pack&apos;s sparks. If the buyer already
+          spent them, their balance goes negative and new jobs wait for a top-up.
+        </p>
+        {purchasesLoading ? (
+          <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+        ) : (purchases?.items?.length ?? 0) > 0 ? (
+          <div className="overflow-x-auto border rounded-lg">
+            <table className="mobile-cards w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/50 text-left">
+                  <th className="py-2 px-3 font-medium">Date</th>
+                  <th className="py-2 px-3 font-medium">User</th>
+                  <th className="py-2 px-3 font-medium">Pack</th>
+                  <th className="py-2 px-3 font-medium text-right">Paid</th>
+                  <th className="py-2 px-3 font-medium">Provider</th>
+                  <th className="py-2 px-3 font-medium">Payment ID</th>
+                  <th className="py-2 px-3 font-medium">Status</th>
+                  <th className="py-2 px-3 font-medium text-right"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {purchases!.items.map((p) => (
+                  <tr key={p.id} className="border-b last:border-0">
+                    <td data-label="Date" className="py-2 px-3 whitespace-nowrap">{formatDateCompact(p.created_at)}</td>
+                    <td data-label="User" className="py-2 px-3">{p.user_email}</td>
+                    <td data-label="Pack" className="py-2 px-3">{p.pack_name}</td>
+                    <td data-label="Paid" className="py-2 px-3 text-right font-mono">${(p.amount_cents / 100).toFixed(2)}</td>
+                    <td data-label="Provider" className="py-2 px-3">{p.provider}</td>
+                    <td data-label="Payment ID" className="py-2 px-3 font-mono text-xs">{p.payment_reference || '—'}</td>
+                    <td data-label="Status" className="py-2 px-3">
+                      {p.status}
+                      {(p.refunded_amount_cents ?? 0) > 0 && p.status === 'completed' && (
+                        <span className="text-muted-foreground"> (refunded ${((p.refunded_amount_cents ?? 0) / 100).toFixed(2)})</span>
+                      )}
+                    </td>
+                    <td data-label="Actions" className="py-2 px-3 text-right">
+                      {p.refundable && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Refund $${(p.amount_cents / 100).toFixed(2)} to ${p.user_email} and remove ${formatNumber(p.sparks_amount)} sparks? This can't be undone.`)) {
+                              refundMutation.mutate(p.id);
+                            }
+                          }}
+                          disabled={refundMutation.isPending}
+                          className="px-3 py-1 rounded-md text-xs font-medium border border-border hover:bg-secondary disabled:opacity-50 transition-colors"
+                        >
+                          Refund…
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-8 text-muted-foreground border rounded-lg">No purchases yet</div>
+        )}
+      </section>
+      )}
+
       {activeTab === 'payments' && (
       <section>
         <h2 className="text-lg font-semibold mb-1">Manual PayPal Claims</h2>
