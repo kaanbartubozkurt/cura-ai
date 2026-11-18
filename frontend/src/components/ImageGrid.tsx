@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils';
 import type { Image, ImageListResponse } from '@/types';
 
 type SourceKey = 'upload' | 'generated' | 'edited';
-type Density = 'S' | 'M' | 'L';
+export type Density = 'S' | 'M' | 'L';
 
 const SOURCE_FILTERS: { key: SourceKey | null; label: string }[] = [
   { key: null, label: 'All' },

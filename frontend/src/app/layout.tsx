@@ -98,7 +98,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 // Marketing/public pages render without the app shell and never redirect to login
-const PUBLIC_ROUTES = ['/', '/pricing', '/terms', '/privacy', '/login'];
+const PUBLIC_ROUTES = ['/', '/pricing', '/terms', '/privacy', '/login', '/sample'];
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { isLoading, isAuthenticated } = useAuth();

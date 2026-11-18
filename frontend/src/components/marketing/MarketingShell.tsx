@@ -16,8 +16,11 @@ export default function MarketingShell({ children }: { children: React.ReactNode
             <SightLabLogo size="sm" />
             <span className="text-lg font-semibold tracking-tight">SightLab</span>
           </Link>
-          <nav className="flex items-center gap-6 text-sm">
-            <Link href="/pricing" className="text-muted-foreground hover:text-foreground transition-colors">
+          <nav className="flex items-center gap-4 text-sm sm:gap-6">
+            <Link href="/sample" className="text-muted-foreground hover:text-foreground transition-colors">
+              Sample library
+            </Link>
+            <Link href="/pricing" className="hidden text-muted-foreground hover:text-foreground transition-colors sm:inline">
               Pricing
             </Link>
             {isAuthenticated ? (
@@ -57,7 +60,7 @@ export default function MarketingShell({ children }: { children: React.ReactNode
             <Link href="/terms" className="hover:text-foreground transition-colors">Terms</Link>
             <Link href="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
             <a href={DISCORD_INVITE_URL} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">Discord</a>
-            <a href="mailto:stuart.leal23@gmail.com" className="hover:text-foreground transition-colors">Contact</a>
+            <a href="mailto:team@sightlab.org" className="hover:text-foreground transition-colors">Contact</a>
           </nav>
         </div>
       </footer>

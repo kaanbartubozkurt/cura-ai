@@ -102,8 +102,8 @@ export default function PrivacyPage() {
             <h2>10. Contact</h2>
             <p className="mt-2">
               Privacy questions or requests:{' '}
-              <a href="mailto:stuart.leal23@gmail.com" className="underline hover:text-foreground">
-                stuart.leal23@gmail.com
+              <a href="mailto:team@sightlab.org" className="underline hover:text-foreground">
+                team@sightlab.org
               </a>
             </p>
           </section>

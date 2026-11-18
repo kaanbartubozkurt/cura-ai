@@ -66,6 +66,7 @@ import type {
   PurchaseListResponse,
   PaymentConfig,
   PayPalOutcome,
+  SampleLibrary,
   AdminPurchase,
   ManualClaimListResponse,
   SubscriptionPlan,
@@ -215,9 +216,10 @@ api.interceptors.response.use(
 // Helper to append auth token to static file URLs (img src, etc.)
 export function authUrl(url: string): string {
   const token = localStorage.getItem('access_token');
-  if (!token) return url;
   const base = process.env.NEXT_PUBLIC_API_URL || '';
   const fullUrl = url.startsWith('/') ? `${base}${url}` : url;
+  // Public pages (sample library) have no token but still need the API origin.
+  if (!token) return fullUrl;
   const sep = fullUrl.includes('?') ? '&' : '?';
   return `${fullUrl}${sep}token=${token}`;
 }
@@ -1739,4 +1741,12 @@ export const historyApi = {
   get: async (id: number) => (await api.get<{ history: ImageHistory | null; used_to_make: { id: number; filename: string; thumbnail_uri?: string | null }[] }>(`/images/${id}/history`)).data,
   usedBy: async (image_ids: number[], folder_id?: number) => (await api.post<{ count: number }>('/images/used-by', { image_ids, folder_id })).data,
   inputUrl: (id: number, index: number) => authUrl(`/api/images/${id}/history/inputs/${index}`),
+};
+
+// Public pages (no account needed)
+export const publicApi = {
+  getSample: async (): Promise<SampleLibrary> => {
+    const { data } = await api.get('/public/sample');
+    return data;
+  },
 };

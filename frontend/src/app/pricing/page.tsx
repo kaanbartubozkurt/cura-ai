@@ -154,8 +154,8 @@ export default function PricingPage() {
         <h2 className="text-2xl font-bold tracking-tight">Questions about pricing?</h2>
         <p className="mt-3 text-muted-foreground">
           Reach out at{' '}
-          <a href="mailto:stuart.leal23@gmail.com" className="underline hover:text-foreground">
-            stuart.leal23@gmail.com
+          <a href="mailto:team@sightlab.org" className="underline hover:text-foreground">
+            team@sightlab.org
           </a>{' '}
           — we are happy to help you pick the right plan.
         </p>
