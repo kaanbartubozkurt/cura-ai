@@ -2,7 +2,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -37,6 +37,20 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
 
     discord_alert_webhook_url: SecretStr = SecretStr("")
+    # Billing margin guard (report_billing_metrics): alert when, over 24 h, we charge less
+    # than this multiple of provider cost, or provider cost exceeds this many USD.
+    billing_min_markup: float = 1.5
+    # Log full provider payloads (prompts, outputs) for local development only; ignored on dev/prod (#159).
+    log_provider_payloads: bool = False
+    billing_daily_cost_alert_usd: float = 25.0
+
+    load_alert_window_minutes: int = Field(default=10, ge=1, le=120)
+    load_alert_min_samples: int = Field(default=5, ge=1)
+    load_alert_cooldown_seconds: int = Field(default=1800, ge=1)
+    load_alert_library_first_images_ms: float = 4000
+    load_alert_api_ms: float = 2000
+    load_alert_image_ms: float = 3000
+    load_alert_server_ms: float = 1000
 
     # Watch folder
     watch_folder_path: str = "./watch_folder"
@@ -77,6 +91,18 @@ class Settings(BaseSettings):
     lemon_squeezy_api_key: str = ""
     lemon_squeezy_webhook_secret: str = ""
     lemon_squeezy_store_id: str = ""
+
+    # Automated PayPal Checkout (Orders v2, #167). Used when client id and
+    # secret are set. paypal_mode picks the sandbox or live PayPal API;
+    # paypal_webhook_id verifies that notifications really come from PayPal.
+    paypal_client_id: str = ""
+    paypal_client_secret: str = ""
+    paypal_webhook_id: str = ""
+    paypal_mode: str = "sandbox"
+
+    # Public sample library (/sample and the landing page): the one folder whose
+    # images, descriptions, clusters and edits anyone may see. 0 turns it off.
+    sample_library_folder_id: int = 0
 
     # Manual PayPal purchases (interim flow while LS approval is pending).
     # Empty URL hides the manual purchase option in the UI.

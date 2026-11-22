@@ -4,9 +4,8 @@ import { useMobileSheet } from '@/hooks/useMobileSheet';
 import { useState } from 'react';
 import { useParams, useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Pencil, Trash2, Box } from 'lucide-react';
+import { Loader2, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import Link from 'next/link';
 import { foldersApi } from '@/lib/api';
 import ImageGrid from '@/components/ImageGrid';
 import ImageDeleteWarning from '@/components/ImageDeleteWarning';
@@ -127,10 +126,6 @@ export default function FolderDetailPage() {
         headerActions={
           !isEditing && (
             <>
-              <Link href={`/models?train_folder=${folderId}`} className={actionButton}>
-                <Box className="h-4 w-4" />
-                Train model
-              </Link>
               <button onClick={startEditing} className={actionButton}>
                 <Pencil className="h-4 w-4" />
                 Rename

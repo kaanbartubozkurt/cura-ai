@@ -29,6 +29,8 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=[
         "app.workers.tasks",
+        "app.workers.load_timing_tasks",
+        "app.workers.billing_metrics_tasks",
         "app.workers.generation_tasks",
     ],
 )
@@ -68,6 +70,11 @@ celery_app.conf.update(
 
     # Routing
     task_routes={
+        # Thumbnails for uploads and library copies of generations/edits get their
+        # own queue so they never wait behind long describe/reprocess batches on the
+        # default queue. The default worker consumes both: `-Q celery,ingest`.
+        "app.workers.tasks.process_ingest": {"queue": "ingest"},
+        "app.workers.tasks.process_ingest_batch": {"queue": "ingest"},
         "app.workers.tasks.cluster_all_images": {"queue": "clustering"},
         "app.workers.tasks.summarize_clusters": {"queue": "clustering"},
         "app.workers.generation_tasks.train_lora": {"queue": "generation"},
@@ -93,6 +100,10 @@ celery_app.conf.update(
 
     # Beat schedule
     beat_schedule={
+        "evaluate-load-timings": {
+            "task": "app.workers.load_timing_tasks.evaluate_load_timings",
+            "schedule": 60.0,
+        },
         "cleanup-pipeline-logs": {
             "task": "app.workers.tasks.cleanup_old_pipeline_logs",
             "schedule": 86400.0,  # once per day
@@ -120,6 +131,11 @@ celery_app.conf.update(
         "reconcile-payments": {
             "task": "app.workers.tasks.reconcile_payments",
             "schedule": 86400.0,  # once per day
+        },
+        "report-billing-metrics": {
+            # Cost/income metrics for the Sentry dashboards + margin guard alerts.
+            "task": "app.workers.billing_metrics_tasks.report_billing_metrics",
+            "schedule": 3600.0,  # every hour
         },
     },
 )

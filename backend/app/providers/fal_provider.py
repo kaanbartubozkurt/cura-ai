@@ -28,6 +28,8 @@ class GenerationCancelledError(Exception):
     """Raised when a generation task is cancelled during polling."""
     pass
 
+from app.providers.log_safety import for_log  # noqa: E402
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -236,7 +238,7 @@ class FalTrainer(BaseTrainer):
         arguments.update(kwargs)
 
         try:
-            logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, arguments)
+            logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, for_log(arguments))
             handle = fal_client.submit(
                 endpoint,
                 arguments=arguments,
@@ -299,7 +301,7 @@ class FalTrainer(BaseTrainer):
                 endpoint,
                 request_id,
             )
-            logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, request_id, result)
+            logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, request_id, for_log(result))
             fal_cost = result.get("cost")
 
             lora_url = result.get("diffusers_lora_file", {}).get("url", "")
@@ -428,7 +430,7 @@ class FalGenerator(BaseGenerator):
         try:
             with provider_span("fal", "generate", endpoint) as _span:  # noqa: F841
                 # Submit (non-blocking) instead of subscribe (blocking)
-                logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, arguments)
+                logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, for_log(arguments))
                 handle = fal_client.submit(endpoint, arguments=arguments)
                 request_id = handle.request_id
 
@@ -449,7 +451,7 @@ class FalGenerator(BaseGenerator):
                     time.sleep(poll_interval)
 
                 result = handle.get()
-            logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, request_id, result)
+            logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, request_id, for_log(result))
             fal_cost = result.get("cost")
 
             # Extract image URL and download
@@ -588,7 +590,7 @@ class FalEditor(BaseEditor):
         request_id = None
         try:
             with provider_span("fal", "edit", self.edit_model) as _span:  # noqa: F841
-                logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, arguments)
+                logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, for_log(arguments))
                 handle = fal_client.submit(endpoint, arguments=arguments)
                 request_id = handle.request_id
 
@@ -608,7 +610,7 @@ class FalEditor(BaseEditor):
                     time.sleep(poll_interval)
 
                 result = handle.get()
-            logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, request_id, result)
+            logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, request_id, for_log(result))
             fal_cost = result.get("cost")
 
             images_data = result.get("images", [])

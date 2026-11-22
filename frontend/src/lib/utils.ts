@@ -16,7 +16,7 @@ export function getStoredTimezone(): string {
 
 /** Parse an API date string as UTC. The backend stores UTC but returns naive
  *  ISO strings (no Z suffix), so JS would otherwise treat them as local time. */
-function parseUTC(date: string): Date {
+export function parseUTC(date: string): Date {
   if (date.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(date)) {
     return new Date(date);
   }

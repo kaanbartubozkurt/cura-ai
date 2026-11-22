@@ -2,7 +2,7 @@
 
 import MarketingShell from '@/components/marketing/MarketingShell';
 
-const LAST_UPDATED = 'July 9, 2026';
+const LAST_UPDATED = 'November 18, 2026';
 
 export default function PrivacyPage() {
   return (
@@ -18,7 +18,7 @@ export default function PrivacyPage() {
               <li><strong>Account data</strong> — email address, display name, and password hash (or Google account identifier if you sign in with Google).</li>
               <li><strong>Content</strong> — images you upload, models you train, prompts you write, and images you generate or edit.</li>
               <li><strong>Usage data</strong> — operations you run, credits spent, and technical logs (request identifiers, timestamps, errors) used to operate and debug the Service.</li>
-              <li><strong>Payment data</strong> — handled by our merchant of record, Lemon Squeezy. We never see or store your card details; we receive only order metadata (amount, product, status).</li>
+              <li><strong>Payment data</strong> — payments are processed by PayPal. We never see or store your card number or PayPal login; we keep only what we need to add sparks and handle payment disputes (amount, pack, status and PayPal&apos;s transaction identifiers).</li>
             </ul>
           </section>
 
@@ -47,7 +47,7 @@ export default function PrivacyPage() {
             <h2>4. Infrastructure &amp; other processors</h2>
             <ul className="mt-2 list-disc pl-6 space-y-1">
               <li><strong>Microsoft Azure</strong> — hosting, database, and file storage.</li>
-              <li><strong>Lemon Squeezy</strong> — payment processing and receipts.</li>
+              <li><strong>PayPal</strong> — payment processing and receipts.</li>
               <li><strong>Sentry</strong> — error and performance monitoring (technical events, not your images).</li>
             </ul>
           </section>
@@ -102,8 +102,8 @@ export default function PrivacyPage() {
             <h2>10. Contact</h2>
             <p className="mt-2">
               Privacy questions or requests:{' '}
-              <a href="mailto:stuart.leal23@gmail.com" className="underline hover:text-foreground">
-                stuart.leal23@gmail.com
+              <a href="mailto:team@sightlab.org" className="underline hover:text-foreground">
+                team@sightlab.org
               </a>
             </p>
           </section>

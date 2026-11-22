@@ -18,14 +18,14 @@ import ModelSelector from './ModelSelector';
 import PipelineProgress from './PipelineProgress';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { Slider } from './Slider';
-import { thumbnail, type InspectorTool } from './Inspector';
+import { thumbnail, type ImageAction } from './Inspector';
 
 interface ImageDrawerProps {
   image: Image;
   onClose: () => void;
   images?: Image[];
   onNavigate?: (image: Image) => void;
-  onTool?: (tool: InspectorTool, image: Image) => void;
+  onTool?: (tool: ImageAction, image: Image) => void;
 }
 
 export default function ImageDrawer({ image, onClose, images, onNavigate, onTool }: ImageDrawerProps) {
@@ -787,14 +787,14 @@ export default function ImageDrawer({ image, onClose, images, onNavigate, onTool
               <button aria-expanded={more} onClick={() => setMore(!more)}>More</button>
               <button className="text-danger" onClick={() => onTool('Delete', liveImage)}>Delete</button>
               {more && <div className="w-full flex flex-wrap gap-4">
-                {(['Add to folder', 'Describe', 'Train model'] as InspectorTool[]).map(action => <button key={action} onClick={() => onTool(action, liveImage)}>{action}</button>)}
+                {(['Add to folder', 'Describe'] as ImageAction[]).map(action => <button key={action} onClick={() => onTool(action, liveImage)}>{action}</button>)}
                 <button onClick={() => void download()}>Download</button>
               </div>}
             </div>
           )}
           {images && onTool && (
             <footer className="viewer-desktop-actions flex flex-wrap gap-2 border-t border-border bg-background p-3">
-              {(['Edit', 'Describe', 'Ask Vision', 'Add to folder', 'Delete'] as InspectorTool[]).map(
+              {(['Edit', 'Describe', 'Ask Vision', 'Add to folder', 'Delete'] as ImageAction[]).map(
                 (tool) => (
                   <button
                     key={tool}

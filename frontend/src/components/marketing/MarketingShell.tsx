@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import SightLabLogo from '@/components/SightLabLogo';
+import { DISCORD_INVITE_URL } from '@/lib/links';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function MarketingShell({ children }: { children: React.ReactNode }) {
@@ -15,13 +16,16 @@ export default function MarketingShell({ children }: { children: React.ReactNode
             <SightLabLogo size="sm" />
             <span className="text-lg font-semibold tracking-tight">SightLab</span>
           </Link>
-          <nav className="flex items-center gap-6 text-sm">
-            <Link href="/pricing" className="text-muted-foreground hover:text-foreground transition-colors">
+          <nav className="flex items-center gap-4 text-sm sm:gap-6">
+            <Link href="/sample" className="text-muted-foreground hover:text-foreground transition-colors">
+              Sample library
+            </Link>
+            <Link href="/pricing" className="hidden text-muted-foreground hover:text-foreground transition-colors sm:inline">
               Pricing
             </Link>
             {isAuthenticated ? (
               <Link
-                href="/generate"
+                href="/images"
                 className="rounded-full bg-primary px-4 py-2 text-primary-foreground font-medium hover:opacity-90 transition-opacity"
               >
                 Open app
@@ -51,11 +55,12 @@ export default function MarketingShell({ children }: { children: React.ReactNode
             <SightLabLogo size="sm" />
             <span>© {new Date().getFullYear()} SightLab</span>
           </div>
-          <nav className="flex items-center gap-6">
+          <nav className="flex flex-wrap items-center justify-center gap-6">
             <Link href="/pricing" className="hover:text-foreground transition-colors">Pricing</Link>
             <Link href="/terms" className="hover:text-foreground transition-colors">Terms</Link>
             <Link href="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
-            <a href="mailto:stuart.leal23@gmail.com" className="hover:text-foreground transition-colors">Contact</a>
+            <a href={DISCORD_INVITE_URL} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">Discord</a>
+            <a href="mailto:team@sightlab.org" className="hover:text-foreground transition-colors">Contact</a>
           </nav>
         </div>
       </footer>

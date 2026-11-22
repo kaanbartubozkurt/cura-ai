@@ -10,8 +10,10 @@ from app.api.generation import router as generation_router
 from app.api.images import router as images_router
 from app.api.jobs import router as jobs_router
 from app.api.logs import router as logs_router
+from app.api.public import router as public_router
 from app.api.search import router as search_router
 from app.api.settings import router as settings_router
+from app.api.telemetry import router as telemetry_router
 from app.api.vision import router as vision_router
 
 api_router = APIRouter()
@@ -28,3 +30,6 @@ api_router.include_router(settings_router)
 api_router.include_router(generation_router)
 api_router.include_router(edit_router)
 api_router.include_router(vision_router)
+
+api_router.include_router(telemetry_router)
+api_router.include_router(public_router)

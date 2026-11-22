@@ -3,13 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { Loader2, TrendingDown, Sparkles, ShoppingBag, Crown, XCircle, ExternalLink } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Loader2, TrendingDown, Sparkles, ShoppingBag, Crown, XCircle, ExternalLink, CheckCircle2, Clock, AlertCircle, MinusCircle, Lock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { billingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn, formatDateCompact } from '@/lib/utils';
-import type { BalanceTransaction, Purchase, SparkPack, SubscriptionPlan } from '@/types';
+import type { BalanceTransaction, PayPalOutcome, Purchase, SparkPack, SubscriptionPlan } from '@/types';
 
 type DateRange = '7d' | '30d' | '90d' | 'all';
 
@@ -43,7 +43,7 @@ function formatPrice(cents: number, currency: string = 'USD'): string {
   }).format(cents / 100);
 }
 
-function PackCard({ pack, onBuy, loading }: { pack: SparkPack; onBuy: (id: number) => void; loading: boolean }) {
+function PackCard({ pack, onBuy, loading, loadingLabel }: { pack: SparkPack; onBuy: (id: number) => void; loading: boolean; loadingLabel?: string }) {
   const totalSparks = pack.sparks_amount + pack.bonus_sparks;
   return (
     <div className={cn(
@@ -81,7 +81,11 @@ function PackCard({ pack, onBuy, loading }: { pack: SparkPack; onBuy: (id: numbe
           'disabled:opacity-50'
         )}
       >
-        {loading ? <Loader2 className="h-4 w-4 animate-spin mx-auto" /> : 'Buy'}
+        {loading ? (
+          <span className="inline-flex items-center justify-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />{loadingLabel}
+          </span>
+        ) : 'Buy'}
       </button>
     </div>
   );
@@ -126,6 +130,75 @@ function PlanCard({ plan, onSubscribe, loading }: { plan: SubscriptionPlan; onSu
   );
 }
 
+function purchaseStatusLabel(p: Purchase): string {
+  if (p.status === 'expired') return 'not completed';
+  if (p.status === 'refunded') return 'refunded';
+  if (p.status === 'disputed') return 'reversed';
+  if (p.status === 'completed' && (p.refunded_amount_cents ?? 0) > 0) {
+    return `partly refunded (${formatPrice(p.refunded_amount_cents ?? 0, p.currency)})`;
+  }
+  return p.status;
+}
+
+type PayPalResult =
+  | { state: 'checking' }
+  | { state: 'done'; outcome: PayPalOutcome }
+  | { state: 'error'; message: string };
+
+function PayPalBanner({ result, onDismiss }: { result: PayPalResult; onDismiss: () => void }) {
+  let tone = 'border-border bg-muted/40 text-foreground';
+  let Icon = Loader2;
+  let title = 'Confirming your payment with PayPal…';
+  let body = 'This takes a few seconds. You can leave this page; your sparks will still be added.';
+  if (result.state === 'error') {
+    tone = 'border-danger/40 bg-danger/10 text-foreground';
+    Icon = AlertCircle;
+    title = 'We couldn\'t confirm this payment yet';
+    body = result.message;
+  } else if (result.state === 'done') {
+    const o = result.outcome;
+    const what = o.pack_name ? `${o.pack_name} pack, ${formatPrice(o.amount_cents, o.currency)} via PayPal.` : '';
+    if (o.status === 'completed') {
+      tone = 'border-success/40 bg-success/10 text-foreground';
+      Icon = CheckCircle2;
+      title = `Payment received: ${formatNumber(o.sparks)} sparks added`;
+      body = `${what} PayPal emailed you a receipt.`;
+    } else if (o.status === 'pending') {
+      tone = 'border-warning/40 bg-warning/10 text-foreground';
+      Icon = Clock;
+      title = 'Payment pending';
+      body = `PayPal is still reviewing this payment (common with bank transfers). Your ${formatNumber(o.sparks)} sparks are added automatically as soon as it clears.`;
+    } else if (o.status === 'declined' || o.status === 'failed') {
+      tone = 'border-danger/40 bg-danger/10 text-foreground';
+      Icon = AlertCircle;
+      title = 'PayPal couldn\'t take this payment';
+      body = 'Nothing was charged. Try another card or your PayPal balance.';
+    } else if (o.status === 'cancelled' || o.status === 'not_approved' || o.status === 'expired') {
+      Icon = MinusCircle;
+      title = 'Payment cancelled';
+      body = 'Nothing was charged. Pick a pack whenever you\'re ready.';
+    } else {
+      Icon = AlertCircle;
+      title = `This payment is ${o.status}`;
+      body = what;
+    }
+  }
+  return (
+    <div role="status" className={cn('flex items-start gap-3 rounded-lg border px-4 py-3', tone)}>
+      <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', result.state === 'checking' && 'animate-spin')} aria-hidden="true" />
+      <div className="flex-1 space-y-1">
+        <p className="text-sm font-semibold">{title}</p>
+        {body && <p className="text-sm text-muted-foreground">{body}</p>}
+      </div>
+      {result.state !== 'checking' && (
+        <button type="button" onClick={onDismiss} aria-label="Dismiss" className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
+          <X className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function BillingPage() {
   const [purchaseTab, setPurchaseTab] = useState<'plans' | 'packs'>('plans');
   const [dateRange, setDateRange] = useState<DateRange>('30d');
@@ -138,6 +211,10 @@ export default function BillingPage() {
   const [manualPack, setManualPack] = useState<SparkPack | null>(null);
   const [manualReference, setManualReference] = useState('');
   const [submittingClaim, setSubmittingClaim] = useState(false);
+  // Result of coming back from PayPal (?paypal=return|cancel&token=<order id>).
+  const [paypalResult, setPaypalResult] = useState<PayPalResult | null>(null);
+  const paypalHandled = useRef(false);
+  const router = useRouter();
   const { user } = useAuth();
   const txnLimit = 25;
   const queryClient = useQueryClient();
@@ -162,6 +239,41 @@ export default function BillingPage() {
       return () => clearInterval(interval);
     }
   }, [searchParams, queryClient]);
+
+  // Back from PayPal: capture the order (or record the cancel) and say what happened.
+  useEffect(() => {
+    const flow = searchParams.get('paypal');
+    const orderId = searchParams.get('token');
+    if (!flow || !orderId || paypalHandled.current) return;
+    paypalHandled.current = true;
+    router.replace('/billing', { scroll: false });
+    const refresh = () => {
+      for (const key of ['balance', 'transactions', 'purchases']) {
+        queryClient.invalidateQueries({ queryKey: ['billing', key] });
+      }
+    };
+    if (flow === 'cancel') {
+      billingApi.cancelPayPal(orderId)
+        .then((outcome) => setPaypalResult({ state: 'done', outcome: { ...outcome, status: 'cancelled' } }))
+        .catch(() => setPaypalResult({ state: 'done', outcome: { status: 'cancelled' } as PayPalOutcome }))
+        .finally(refresh);
+      return;
+    }
+    setPaypalResult({ state: 'checking' });
+    billingApi.capturePayPal(orderId)
+      .then((outcome) => {
+        setPaypalResult({ state: 'done', outcome });
+        if (outcome.status === 'completed') toast.success(`${formatNumber(outcome.sparks)} sparks added`);
+      })
+      .catch((err) => {
+        const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+        setPaypalResult({
+          state: 'error',
+          message: detail || 'We couldn\'t confirm this payment yet. If you paid, your sparks will be added automatically within a few minutes.',
+        });
+      })
+      .finally(refresh);
+  }, [searchParams, queryClient, router]);
 
   // Handle ?subscription=success redirect
   useEffect(() => {
@@ -196,6 +308,10 @@ export default function BillingPage() {
     queryFn: billingApi.getPaymentConfig,
     staleTime: 5 * 60 * 1000,
   });
+
+  // Monthly plans aren't offered through PayPal yet: one-time packs only.
+  const isPayPal = paymentConfig?.provider === 'paypal';
+  const activeTab = isPayPal ? 'packs' : purchaseTab;
 
   const { data: subPlans, isLoading: subPlansLoading } = useQuery({
     queryKey: ['billing', 'subscription-plans'],
@@ -235,17 +351,23 @@ export default function BillingPage() {
       return;
     }
 
+    // PayPal: review the order and pay on our own checkout page.
+    if (isPayPal) {
+      router.push(`/billing/checkout?pack=${packId}`);
+      return;
+    }
+
     setBuyingPackId(packId);
     try {
       const currentUrl = window.location.origin + '/billing';
-      const result = await billingApi.createCheckout(
-        packId,
-        `${currentUrl}?purchase=success`,
-        currentUrl,
-      );
+      // PayPal adds &token=<order id> to these when it sends the buyer back.
+      const result = isPayPal
+        ? await billingApi.createCheckout(packId, `${currentUrl}?paypal=return`, `${currentUrl}?paypal=cancel`)
+        : await billingApi.createCheckout(packId, `${currentUrl}?purchase=success`, currentUrl);
       window.location.href = result.checkout_url;
-    } catch {
-      toast.error('Failed to start checkout. Please try again.');
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail || 'Failed to start checkout. Please try again.');
       setBuyingPackId(null);
     }
   };
@@ -329,6 +451,7 @@ export default function BillingPage() {
         <h1 className="text-xl font-semibold tracking-tight">Billing</h1>
         <a href="#add-sparks" className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground">Add sparks</a>
       </div>
+      {paypalResult && <PayPalBanner result={paypalResult} onDismiss={() => setPaypalResult(null)} />}
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-border p-4">
           <p className="text-xs text-muted-foreground">Available sparks</p>
@@ -389,19 +512,19 @@ export default function BillingPage() {
 
       <section id="add-sparks" className="scroll-mt-4 rounded-lg border border-border bg-background p-4 sm:p-5">
         <h2 className="mb-4 text-sm font-semibold">Add sparks</h2>
-        <div role="group" aria-label="Purchase type" className="mb-5 inline-flex gap-1 rounded-md bg-muted p-1">
+        {!isPayPal && <div role="group" aria-label="Purchase type" className="mb-5 inline-flex gap-1 rounded-md bg-muted p-1">
           {(['plans', 'packs'] as const).map((tab) => (
             <button key={tab} aria-pressed={purchaseTab === tab} onClick={() => setPurchaseTab(tab)}
               className={cn('rounded px-3 py-1.5 text-sm', purchaseTab === tab ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground')}>
               {tab === 'plans' ? 'Monthly plans' : 'One-time packs'}
             </button>
           ))}
-        </div>
-      {purchaseTab === 'plans' && subscription && !['expired', 'cancelled'].includes(subscription.status) && (
+        </div>}
+      {activeTab === 'plans' && subscription && !['expired', 'cancelled'].includes(subscription.status) && (
         <p className="text-sm text-muted-foreground">Your {subscription.plan_name} plan is shown above. You can add one-time packs at any time.</p>
       )}
       {/* Subscription Plans (show if no active subscription) */}
-      {purchaseTab === 'plans' && !subLoading && (!subscription || subscription.status === 'expired' || subscription.status === 'cancelled') && (
+      {activeTab === 'plans' && !subLoading && (!subscription || subscription.status === 'expired' || subscription.status === 'cancelled') && (
         <div className="pt-2">
           <div className="flex items-center gap-2 mb-4">
             <Crown className="h-5 w-5 text-selection" />
@@ -427,7 +550,7 @@ export default function BillingPage() {
       )}
 
       {/* Buy Sparks */}
-      {purchaseTab === 'packs' && <div className="pt-2">
+      {activeTab === 'packs' && <div className="pt-2">
         <div className="flex items-center gap-2 mb-4">
           <Sparkles className="h-5 w-5 text-selection" />
           <h2 className="text-sm font-semibold">Buy Sparks</h2>
@@ -442,11 +565,18 @@ export default function BillingPage() {
                 pack={pack}
                 onBuy={handleBuy}
                 loading={buyingPackId === pack.id}
+                loadingLabel={undefined}
               />
             ))}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">No spark packs available.</p>
+        )}
+        {isPayPal && (
+          <p className="mt-4 flex items-start gap-2 text-sm text-muted-foreground">
+            <Lock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            Checkout on PayPal: pay with your PayPal balance or any debit or credit card. No PayPal account needed. Sparks never expire.
+          </p>
         )}
       </div>}
 
@@ -642,6 +772,7 @@ export default function BillingPage() {
                   <th className="text-right px-4 py-3 font-medium">Sparks</th>
                   <th className="text-right px-4 py-3 font-medium">Amount</th>
                   <th className="text-center px-4 py-3 font-medium">Status</th>
+                  <th className="text-left px-4 py-3 font-medium">PayPal ID</th>
                 </tr>
               </thead>
               <tbody>
@@ -662,8 +793,11 @@ export default function BillingPage() {
                           ? 'bg-selection-soft text-selection'
                           : 'bg-muted text-muted-foreground'
                       )}>
-                        {p.status}
+                        {purchaseStatusLabel(p)}
                       </span>
+                    </td>
+                    <td data-label="PayPal ID" className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                      {p.provider?.startsWith('paypal') && p.payment_reference ? p.payment_reference : '—'}
                     </td>
                   </tr>
                 ))}

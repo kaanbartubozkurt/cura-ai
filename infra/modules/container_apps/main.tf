@@ -125,8 +125,10 @@ resource "azurerm_container_app" "celery_worker" {
       cpu    = var.celery_worker_cpu
       memory = var.celery_worker_memory
 
+      # Default queue plus "ingest" (thumbnails), so ingest never waits behind batches.
       command = [
         "celery", "-A", "app.workers.celery_app", "worker",
+        "-Q", "celery,ingest",
         "--loglevel=info",
         "--concurrency=${var.celery_worker_concurrency}"
       ]
@@ -190,9 +192,14 @@ resource "azurerm_container_app" "celery_worker_clustering" {
       cpu    = var.celery_clustering_cpu
       memory = var.celery_clustering_memory
 
+      # -B runs Celery Beat inside this worker, so the beat_schedule maintenance tasks
+      # (stale reservations, billing/payment reconciliation, stuck jobs, load-time
+      # alerts...) actually run (#150). There must be exactly one scheduler, so this
+      # app is capped at one replica (see the validation on celery_clustering_max_replicas).
       command = [
         "celery", "-A", "app.workers.celery_app", "worker",
         "-Q", "clustering",
+        "-B", "--schedule=/tmp/celerybeat-schedule",
         "--loglevel=info",
         "--concurrency=1"
       ]

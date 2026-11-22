@@ -129,6 +129,90 @@ export interface JobListResponse {
   limit: number;
 }
 
+export interface ScopeCount {
+  id: number;
+  name: string;
+  count: number;
+}
+
+/** Inspector stats for the whole library, one folder or one cluster (GET /images/scope-stats). */
+export interface ScopeStats {
+  scope: 'library' | 'folder' | 'cluster';
+  total: number;
+  pending: number;
+  failed: number;
+  not_described: number;
+  tagged: number;
+  described: number;
+  embedded: number;
+  in_cluster: number;
+  cluster_count: number;
+  clusters: ScopeCount[];
+  in_folder: number;
+  folder_count: number;
+  folders: ScopeCount[];
+  in_other_folders: number | null;
+  sources: { upload: number; generated: number; edited: number };
+  orientation: { portrait: number; landscape: number; square: number };
+  total_bytes: number;
+  first_added: string | null;
+  last_added: string | null;
+  added_7d: number;
+  added_30d: number;
+  top_tags: { tag: string; count: number }[];
+}
+
+/** A saved edit, read back for Remix (GET /edit/images/{id}/recipe). */
+export interface EditRecipeSource {
+  type: 'gallery' | 'generated' | 'upload';
+  id?: number;
+  key?: string;
+  name?: string;
+  role?: 'reference' | 'element_main' | 'element_angle';
+  element?: number;
+  index: number;
+  available: boolean;
+  object_key?: string;
+  width?: number | null;
+  height?: number | null;
+  thumbnail_uri_medium?: string | null;
+  thumbnail_uri_large?: string | null;
+}
+
+export interface EditRecipe {
+  id: number;
+  job: 'describe' | 'paint' | 'objects' | 'subject';
+  edit_model: string;
+  prompt: string;
+  negative_prompt: string;
+  num_images: number;
+  settings: {
+    image_size?: string | { width: number; height: number };
+    resolution?: string;
+    aspect_ratio?: string;
+    quality?: string;
+    safety_tolerance?: string;
+    enable_web_search?: boolean;
+    enable_prompt_expansion?: boolean;
+    enable_safety_checker?: boolean;
+    result_type?: 'single' | 'series';
+    series_amount?: number;
+  };
+  original_seed: number | null;
+  has_mask: boolean;
+  object_boxes: unknown[] | null;
+  precision_area: 'none' | 'auto' | 'box' | null;
+  precision_box: { x_min: number; y_min: number; x_max: number; y_max: number } | null;
+  sources: EditRecipeSource[];
+  missing_sources: number;
+}
+
+export interface ClusterRunParams {
+  method?: 'hdbscan' | 'kmeans' | 'graph';
+  hdbscan_min_cluster_size?: number;
+  kmeans_max_clusters?: number;
+}
+
 export interface PipelineStats {
   total_images: number;
   pending: number;
@@ -319,6 +403,7 @@ export interface LoraUsed {
 }
 
 export interface GeneratedImage {
+  library_image_id?: number | null;
   id: number;
   prompt: string;
   negative_prompt: string | null;
@@ -338,6 +423,8 @@ export interface GeneratedImage {
   mime_type: string | null;
   thumbnail_uri_small: string | null;
   thumbnail_uri_medium: string | null;
+  library_thumbnail_uri_medium: string | null;
+  library_thumbnail_uri_large: string | null;
   job_id: number | null;
   cost_sparks: number | null;
   created_at: string;
@@ -552,10 +639,32 @@ export interface Purchase {
   pack_name: string;
   sparks_amount: number;
   amount_cents: number;
+  refunded_amount_cents?: number;
   currency: string;
+  provider?: string | null;
+  /** PayPal capture id (the "Transaction ID" PayPal shows the buyer). */
+  payment_reference?: string | null;
   status: string;
   created_at: string;
   completed_at: string | null;
+}
+
+export interface AdminPurchase extends Purchase {
+  user_id: number;
+  user_email: string;
+  refundable: boolean;
+}
+
+/** What happened when the buyer came back from PayPal. */
+export interface PayPalOutcome {
+  status: 'completed' | 'pending' | 'declined' | 'cancelled' | 'not_approved' | 'refunded' | 'disputed' | 'failed' | 'expired';
+  purchase_id: string;
+  pack_name: string;
+  sparks: number;
+  amount_cents: number;
+  currency: string;
+  payment_reference: string | null;
+  reason?: string | null;
 }
 
 export interface PurchaseListResponse {
@@ -565,6 +674,10 @@ export interface PurchaseListResponse {
 
 export interface PaymentConfig {
   automated: boolean;
+  /** Automated checkout provider: 'paypal', 'lemon_squeezy' or 'mock'. */
+  provider?: string | null;
+  /** PayPal's public client id, for its buttons on the checkout page. */
+  paypal_client_id?: string | null;
   manual_enabled: boolean;
   paypal_me_url: string;
 }
@@ -969,4 +1082,49 @@ export interface ModelCatalog {
   language: CatalogLanguageModel[]; generation: CatalogImageModel[]; edit: CatalogImageModel[];
   training_base_models: { key: string; label: string }[];
   defaults: { vision_model: string; language_model: string; generation_model: string; edit_model: string };
+}
+
+/** Public sample library (GET /public/sample): one folder, readable without an account. */
+export interface SampleEdit {
+  id: number;
+  model: string;
+  model_label: string;
+  prompt: string;
+  width: number | null;
+  height: number | null;
+  thumb: string;
+  large: string;
+}
+
+export interface SampleImage {
+  id: number;
+  width: number | null;
+  height: number | null;
+  description: string | null;
+  tags: string[];
+  cluster_ids: number[];
+  thumb: string;
+  large: string;
+}
+
+export interface SampleLibrary {
+  configured: boolean;
+  name?: string;
+  images: SampleImage[];
+  clusters: { id: number; title: string; count: number; image_ids: number[] }[];
+  /** Edits made from each sample image, keyed by its id. */
+  edits: Record<string, SampleEdit[]>;
+}
+
+/** GET /public/prices: sparks per run at default settings, cheapest first. */
+export interface ModelPrice {
+  key: string;
+  label: string;
+  sparks: number;
+}
+
+export interface PublicPrices {
+  edit: ModelPrice[];
+  generate: ModelPrice[];
+  train: ModelPrice[];
 }

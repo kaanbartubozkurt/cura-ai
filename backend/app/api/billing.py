@@ -1508,11 +1508,15 @@ class CheckoutRequest(BaseModel):
     pack_id: int
     success_url: str | None = None
     cancel_url: str | None = None
+    # "redirect": send the buyer to the provider and back. "sdk": PayPal's buttons
+    # on our checkout page create the order through this call and need its id.
+    flow: Literal["redirect", "sdk"] = "redirect"
 
 
 class CheckoutResponse(BaseModel):
     checkout_url: str
     purchase_id: str
+    order_id: str | None = None
 
 
 class PurchaseItem(BaseModel):
@@ -1521,7 +1525,10 @@ class PurchaseItem(BaseModel):
     pack_name: str
     sparks_amount: int
     amount_cents: int
+    refunded_amount_cents: int = 0
     currency: str
+    provider: str | None = None
+    payment_reference: str | None = None
     status: str
     created_at: str
     completed_at: str | None
@@ -1553,6 +1560,22 @@ def list_packs(db: Session = Depends(get_db)):
     ]
 
 
+def _safe_return_url(url: str | None, default: str) -> str:
+    """Payment providers send the buyer back here: only our own frontends are allowed."""
+    from urllib.parse import urlparse
+
+    from app.core.config import get_settings
+
+    if not url:
+        return default
+    parsed = urlparse(url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    allowed = {o.strip().rstrip("/") for o in get_settings().cors_origins.split(",") if o.strip()}
+    if parsed.scheme not in ("http", "https") or origin not in allowed:
+        raise HTTPException(status_code=400, detail="Return address is not allowed")
+    return url
+
+
 @router.post("/checkout", response_model=CheckoutResponse)
 async def create_checkout(
     body: CheckoutRequest,
@@ -1560,7 +1583,7 @@ async def create_checkout(
     db: Session = Depends(get_db),
 ):
     """Create a payment checkout session for a spark pack."""
-    from app.services.payment_gateway import PaymentsNotConfiguredError
+    from app.services.payment_gateway import PaymentsNotConfiguredError, PayPalError
     from app.services.payment_service import FraudCheckError, PaymentService
 
     service = PaymentService(db, current_user.id)
@@ -1568,10 +1591,13 @@ async def create_checkout(
         result = await service.create_checkout(
             pack_id=body.pack_id,
             user_email=current_user.email,
-            success_url=body.success_url or "http://localhost:3000/billing?purchase=success",
-            cancel_url=body.cancel_url or "http://localhost:3000/billing",
+            success_url=_safe_return_url(body.success_url, "http://localhost:3000/billing?purchase=success"),
+            cancel_url=_safe_return_url(body.cancel_url, "http://localhost:3000/billing"),
+            flow=body.flow,
         )
         return CheckoutResponse(**result)
+    except PayPalError as e:
+        raise HTTPException(status_code=502, detail="PayPal is not responding. Please try again in a minute.") from e
     except PaymentsNotConfiguredError:
         raise HTTPException(
             status_code=503,
@@ -1583,8 +1609,48 @@ async def create_checkout(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class PayPalOrderRequest(BaseModel):
+    order_id: str = Field(..., min_length=5, max_length=64, pattern=r"^[A-Za-z0-9-]+$")
+
+
+@router.post("/paypal/capture")
+async def capture_paypal_order(
+    body: PayPalOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Back from PayPal: capture the approved order and credit the sparks (exactly once)."""
+    from app.services.payment_gateway import PayPalError
+    from app.services.payment_service import PaymentService
+
+    try:
+        return await PaymentService(db, current_user.id).capture_paypal_order(body.order_id)
+    except PayPalError as e:
+        raise HTTPException(status_code=502, detail="PayPal is not responding. If you paid, your sparks "
+                            "will be added automatically within a few minutes.") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/paypal/cancel")
+def cancel_paypal_order(
+    body: PayPalOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The buyer cancelled on PayPal: nothing was charged."""
+    from app.services.payment_service import PaymentService
+
+    try:
+        return PaymentService(db, current_user.id).cancel_paypal_order(body.order_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 class PaymentConfigResponse(BaseModel):
     automated: bool
+    provider: str | None = None
+    paypal_client_id: str | None = None
     manual_enabled: bool
     paypal_me_url: str
 

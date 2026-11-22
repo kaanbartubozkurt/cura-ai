@@ -21,6 +21,7 @@ from app.schemas import (
     PipelineStats,
     ProcessingCostOperation,
     ProcessingCostResponse,
+    ScopeStats,
     StepResponse,
     UploadResponse,
 )
@@ -309,6 +310,22 @@ async def list_images(
         skip=skip,
         limit=limit,
     )
+
+
+@router.get("/scope-stats", response_model=ScopeStats)
+async def get_scope_stats(
+    folder_id: int | None = None,
+    cluster_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Inspector stats for the library, a folder (`folder_id`) or a cluster (`cluster_id`)."""
+    from app.services.library_stats_service import get_library_stats_service
+
+    stats = get_library_stats_service(db, current_user.id).compute(folder_id=folder_id, cluster_id=cluster_id)
+    if stats is None:
+        raise HTTPException(status_code=404, detail="Folder or cluster not found")
+    return stats
 
 
 @router.get("/stats", response_model=PipelineStats)

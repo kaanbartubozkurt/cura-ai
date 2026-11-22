@@ -1,11 +1,14 @@
 'use client';
 
 import LibraryImage from '@/components/LibraryImage';
+import { AppendOnlyGrid } from '@/components/ImageGrid';
+import ProgressiveImage from '@/components/ProgressiveImage';
+import { useImagePixels } from '@/hooks/useImagePixels';
 
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { imagesApi, foldersApi, clustersApi, generationApi, authUrl } from '@/lib/api';
-import { X, Loader2, Check, ChevronLeft, ChevronRight, FolderOpen, LayoutGrid, Maximize2 } from 'lucide-react';
+import { imagesApi, foldersApi, clustersApi } from '@/lib/api';
+import { X, Loader2, ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export interface PickedImage {
@@ -22,20 +25,44 @@ interface PickerItem {
   id: number;
   type: PickedImage['type'];
   thumbnail: string;
+  small?: string;
+  medium?: string;
   full: string;
   large?: string;
   width?: number;
   height?: number;
+  search?: string;
 }
 
-const GRID = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2';
+function PickerThumbnail({ item }: { item: PickerItem }) {
+  const { host, pixels } = useImagePixels(item.width ?? null, item.height ?? null);
+  const variants = [
+    { size: 200, url: item.small },
+    { size: 400, url: item.medium },
+    { size: 800, url: item.large },
+  ].filter((variant) => variant.url);
+  const high = variants.find((variant) => variant.size >= pixels) || variants[variants.length - 1];
+  return (
+    <span ref={host} className="block h-full w-full">
+      <ProgressiveImage
+        src={item.small || item.thumbnail}
+        highSrc={pixels > 0 ? high?.url : undefined}
+        alt=""
+        loading="lazy"
+        className="block h-full w-full object-contain"
+      />
+    </span>
+  );
+}
 
 interface ImagePickerModalProps {
   open: boolean;
   onClose: () => void;
   onDone: (items: PickedImage[]) => void;
   alreadySelectedIds?: number[];
+  alreadySelectedItems?: { type: PickedImage['type']; id: number }[];
   maxSelection?: number;
+  startNumber?: number;
 }
 
 export default function ImagePickerModal({
@@ -43,15 +70,23 @@ export default function ImagePickerModal({
   onClose,
   onDone,
   alreadySelectedIds = [],
+  alreadySelectedItems,
   maxSelection = 3,
+  startNumber = alreadySelectedIds.length + 1,
 }: ImagePickerModalProps) {
-  const [tab, setTab] = useState<'gallery' | 'generated'>('gallery');
+  const [source, setSource] = useState<string>();
+  const [search, setSearch] = useState('');
+  const [folderPage, setFolderPage] = useState(0);
+  const [clusterPage, setClusterPage] = useState(0);
 
   // Track selected items with their preview URLs
   const [selected, setSelected] = useState<PickedImage[]>([]);
 
   // Large preview of one image, stepping through the grid it was opened from
-  const [preview, setPreview] = useState<{ items: PickerItem[]; index: number } | null>(null);
+  const [preview, setPreview] = useState<{
+    items: PickerItem[];
+    index: number;
+  } | null>(null);
 
   // Two-level browse: null = show folders/clusters, number = show images inside
   const [browseFolderId, setBrowseFolderId] = useState<number | null>(null);
@@ -66,71 +101,130 @@ export default function ImagePickerModal({
 
   // Level 1: Folders and clusters
   const { data: foldersData, isLoading: foldersLoading } = useQuery({
-    queryKey: ['picker-folders'],
-    queryFn: () => foldersApi.list({ limit: 100 }),
-    enabled: open && tab === 'gallery' && browseFolderId === null && browseClusterId === null,
+    queryKey: ['picker-folders', folderPage],
+    queryFn: () => foldersApi.list({ skip: folderPage * 40, limit: 40 }),
+    enabled: open,
   });
 
   const { data: clustersData, isLoading: clustersLoading } = useQuery({
-    queryKey: ['picker-clusters'],
-    queryFn: () => clustersApi.list({ limit: 100 }),
-    enabled: open && tab === 'gallery' && browseFolderId === null && browseClusterId === null,
+    queryKey: ['picker-clusters', clusterPage],
+    queryFn: () => clustersApi.list({ skip: clusterPage * 40, limit: 40 }),
+    enabled: open,
   });
 
   // Level 2: Images inside a folder or cluster
   const { data: folderImages, isLoading: folderImagesLoading } = useQuery({
     queryKey: ['picker-folder-images', browseFolderId, page],
-    queryFn: () => foldersApi.listImages(browseFolderId!, { skip: page * limit, limit, min_status: 'ingested' }),
-    enabled: open && tab === 'gallery' && browseFolderId !== null,
+    queryFn: () =>
+      foldersApi.listImages(browseFolderId!, {
+        skip: page * limit,
+        limit,
+        min_status: 'ingested',
+      }),
+    enabled: open && browseFolderId !== null,
   });
 
   const { data: clusterDetail, isLoading: clusterImagesLoading } = useQuery({
-    queryKey: ['picker-cluster-images', browseClusterId],
-    queryFn: () => clustersApi.get(browseClusterId!),
-    enabled: open && tab === 'gallery' && browseClusterId !== null,
+    queryKey: ['picker-cluster-images', browseClusterId, page],
+    queryFn: () =>
+      clustersApi.getImages(browseClusterId!, {
+        skip: page * limit,
+        limit: limit + 1,
+      }),
+    enabled: open && browseClusterId !== null,
   });
 
-  // Generated tab
-  const { data: generatedData, isLoading: generatedLoading } = useQuery({
-    queryKey: ['picker-generated', page],
-    queryFn: () => generationApi.listImages({ skip: page * limit, limit, status: 'completed' }),
-    enabled: open && tab === 'generated',
+  const { data: libraryData, isLoading: libraryLoading } = useQuery({
+    queryKey: ['picker-library', source, page],
+    queryFn: () =>
+      imagesApi.list({
+        source,
+        skip: page * limit,
+        limit,
+        min_status: 'ingested',
+      }),
+    enabled:
+      open &&
+      browseFolderId === null &&
+      browseClusterId === null,
   });
+  useEffect(() => {
+    if (open) {
+      setSelected([]);
+      setPreview(null);
+    }
+  }, [open]);
 
   useEffect(() => {
-    if (!preview) return;
+    if (!open) return;
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopImmediatePropagation();
-        setPreview(null);
+        if (preview) setPreview(null);
+        else onClose();
       } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         const step = event.key === 'ArrowLeft' ? -1 : 1;
-        setPreview(current => current && { ...current, index: Math.min(current.items.length - 1, Math.max(0, current.index + step)) });
+        setPreview(
+          (current) =>
+            current && {
+              ...current,
+              index: Math.min(
+                current.items.length - 1,
+                Math.max(0, current.index + step)
+              ),
+            }
+        );
       }
     };
     window.addEventListener('keydown', key, true);
     return () => window.removeEventListener('keydown', key, true);
-  }, [preview]);
+  }, [preview, open, onClose]);
 
   if (!open) return null;
 
   const current = preview?.items[preview.index];
-  const isInsideCollection = browseFolderId !== null || browseClusterId !== null;
+  const isInsideCollection =
+    browseFolderId !== null || browseClusterId !== null;
 
-  const isSelectedId = (id: number) => selected.some((s) => s.id === id) || alreadySelectedIds.includes(id);
+  const isAlreadySelected = (id: number, type: PickedImage['type']) =>
+    alreadySelectedItems
+      ? alreadySelectedItems.some(
+          (item) => item.id === id && item.type === type
+        )
+      : alreadySelectedIds.includes(id);
+  const isSelectedId = (id: number, type: PickedImage['type']) =>
+    selected.some((s) => s.id === id && s.type === type) ||
+    isAlreadySelected(id, type);
 
-  const toggleImage = (id: number, type: 'gallery' | 'generated', thumbUrl: string, item?: PickerItem) => {
-    if (alreadySelectedIds.includes(id)) return;
+  const toggleImage = (
+    id: number,
+    type: 'gallery' | 'generated',
+    thumbUrl: string,
+    item?: PickerItem
+  ) => {
+    if (isAlreadySelected(id, type)) return;
     const existing = selected.find((s) => s.id === id && s.type === type);
     if (existing) {
       setSelected(selected.filter((s) => s !== existing));
     } else if (remaining > 0) {
-      setSelected([...selected, { type, id, previewUrl: thumbUrl, fullUrl: item?.full, largeUrl: item?.large, width: item?.width, height: item?.height }]);
+      setSelected([
+        ...selected,
+        {
+          type,
+          id,
+          previewUrl: thumbUrl,
+          fullUrl: item?.full,
+          largeUrl: item?.large,
+          width: item?.width,
+          height: item?.height,
+        },
+      ]);
     }
   };
 
   const handleDone = () => {
     onDone(selected);
+    setSelected([]);
     onClose();
   };
 
@@ -153,31 +247,32 @@ export default function ImagePickerModal({
     setPage(0);
   };
 
-  // Get cover thumbnail URL for folders/clusters
-  const getCoverUrl = (url: string | null) => {
-    if (!url) return null;
-    return url.startsWith('http') ? url : authUrl(url);
-  };
-
   // Build a thumbnail URL from a URI path
   const galleryThumbUrl = (uri: string | null | undefined) => {
     if (!uri) return '';
     return imagesApi.getThumbnailUrl(uri.split('/').pop() || '');
   };
 
-  const generatedThumbUrl = (uri: string | null | undefined) => {
-    if (!uri) return '';
-    return generationApi.getThumbnailUrl(uri.split('/').pop() || '');
-  };
-
   const renderTiles = (items: PickerItem[]) => (
-    <div className={GRID}>
-      {items.map((item, index) => {
-        const checked = isSelectedId(item.id);
+    <AppendOnlyGrid
+      density="M"
+      images={items.filter(
+          (item) =>
+            !search ||
+            `${item.id} ${item.search || ''}`
+              .toLowerCase()
+              .includes(search.toLowerCase())
+        )}
+    >
+      {(item) => {
+        const index = items.indexOf(item);
+        const checked = isSelectedId(item.id, item.type);
         return (
-          <div key={item.id} className="group relative aspect-square">
+          <div className="group relative h-full">
             <button
-              onClick={() => toggleImage(item.id, item.type, item.thumbnail, item)}
+              onClick={() =>
+                toggleImage(item.id, item.type, item.thumbnail, item)
+              }
               disabled={!checked && remaining <= 0}
               aria-label={`${checked ? 'Unselect' : 'Select'} image ${item.id}`}
               aria-pressed={checked}
@@ -190,13 +285,24 @@ export default function ImagePickerModal({
               )}
             >
               {item.thumbnail ? (
-                <LibraryImage src={item.thumbnail} alt="" className="w-full h-full object-cover" loading="lazy" />
+                <PickerThumbnail item={item} />
               ) : (
                 <div className="w-full h-full bg-muted/30" />
               )}
               {checked && (
                 <div className="absolute inset-0 bg-primary/20 flex items-center justify-center">
-                  <Check className="h-5 w-5 text-primary" />
+                  <span className="rounded-full bg-primary px-2 py-1 text-xs text-primary-foreground">
+                    {selected.findIndex(
+                      (source) =>
+                        source.id === item.id && source.type === item.type
+                    ) < 0
+                      ? 'Added'
+                      : startNumber +
+                        selected.findIndex(
+                          (source) =>
+                            source.id === item.id && source.type === item.type
+                        )}
+                  </span>
                 </div>
               )}
             </button>
@@ -210,25 +316,43 @@ export default function ImagePickerModal({
             </button>
           </div>
         );
-      })}
-    </div>
+      }}
+    </AppendOnlyGrid>
   );
 
   // Render image grid for level 2 (gallery images in folder/cluster)
   const renderImageGrid = (
-    images: Array<{ id: number; object_key: string; width?: number | null; height?: number | null; thumbnail_uri_small?: string | null; thumbnail_uri_medium?: string | null; thumbnail_uri_large?: string | null }>,
-    total: number,
+    images: Array<{
+      id: number;
+      object_key: string;
+      width?: number | null;
+      height?: number | null;
+      thumbnail_uri_small?: string | null;
+      thumbnail_uri_medium?: string | null;
+      thumbnail_uri_large?: string | null;
+      filename?: string;
+      description?: unknown;
+      tags?: unknown;
+    }>,
+    total: number
   ) => (
     <>
-      {renderTiles(images.map(img => ({
-        id: img.id,
-        type: 'gallery' as const,
-        thumbnail: galleryThumbUrl(img.thumbnail_uri_medium || img.thumbnail_uri_small),
-        full: imagesApi.getImageUrl(img.object_key.split('/').pop() || ''),
-        large: galleryThumbUrl(img.thumbnail_uri_large),
-        width: img.width ?? undefined,
-        height: img.height ?? undefined,
-      })))}
+      {renderTiles(
+        images.map((img) => ({
+          id: img.id,
+          type: 'gallery' as const,
+          search: JSON.stringify(img),
+          thumbnail: galleryThumbUrl(
+            img.thumbnail_uri_medium || img.thumbnail_uri_small
+          ),
+          full: imagesApi.getImageUrl(img.object_key.split('/').pop() || ''),
+          small: galleryThumbUrl(img.thumbnail_uri_small),
+          medium: galleryThumbUrl(img.thumbnail_uri_medium),
+          large: galleryThumbUrl(img.thumbnail_uri_large),
+          width: img.width ?? undefined,
+          height: img.height ?? undefined,
+        }))
+      )}
       {total > limit && (
         <div className="flex justify-center gap-2 mt-4">
           <button
@@ -256,8 +380,14 @@ export default function ImagePickerModal({
   return (
     <>
       <div className="fixed inset-0 bg-black/70 z-50" onClick={onClose} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        onClick={onClose}
+      >
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Select source images"
           className="mobile-modal bg-card rounded-xl shadow-xl max-w-6xl w-full max-h-[90vh] flex flex-col"
           onClick={(e) => e.stopPropagation()}
         >
@@ -265,7 +395,10 @@ export default function ImagePickerModal({
           <div className="flex items-center justify-between p-4 border-b border-border">
             <div className="flex items-center gap-3">
               {isInsideCollection && (
-                <button onClick={goBack} className="p-1 hover:bg-muted rounded-lg transition-colors">
+                <button
+                  onClick={goBack}
+                  className="p-1 hover:bg-muted rounded-lg transition-colors"
+                >
                   <ChevronLeft className="h-5 w-5" />
                 </button>
               )}
@@ -273,198 +406,168 @@ export default function ImagePickerModal({
                 {isInsideCollection ? browseLabel : 'Select Source Images'}
               </h3>
               <span className="text-sm text-muted-foreground">
-                {totalSelected + alreadySelectedIds.length}/{maxSelection} selected
+                {totalSelected + alreadySelectedIds.length}/{maxSelection}{' '}
+                selected
               </span>
             </div>
-            <button onClick={onClose} className="p-1 hover:bg-muted rounded-lg transition-colors">
+            <button
+              autoFocus
+              aria-label="Close picker"
+              onClick={onClose}
+              className="p-1 hover:bg-muted rounded-lg transition-colors"
+            >
               <X className="h-5 w-5" />
             </button>
           </div>
 
-          {/* Tabs — only show at top level */}
-          {!isInsideCollection && (
-            <div className="flex border-b border-border">
-              <button
-                onClick={() => { setTab('gallery'); setPage(0); }}
-                className={cn(
-                  'px-4 py-2 text-sm font-medium border-b-2 transition-colors',
-                  tab === 'gallery'
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-muted-foreground hover:text-foreground'
-                )}
-              >
-                Library
-              </button>
-              <button
-                onClick={() => { setTab('generated'); setPage(0); }}
-                className={cn(
-                  'px-4 py-2 text-sm font-medium border-b-2 transition-colors',
-                  tab === 'generated'
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-muted-foreground hover:text-foreground'
-                )}
-              >
-                Generated
-              </button>
-            </div>
-          )}
-
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto p-4">
-            {tab === 'gallery' ? (
-              // Gallery tab
-              isInsideCollection ? (
-                // Level 2: Images inside folder or cluster
-                browseFolderId !== null ? (
-                  folderImagesLoading ? (
-                    <div className="flex items-center justify-center h-32">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : !folderImages?.items.length ? (
-                    <p className="text-center text-muted-foreground py-8">No images in this folder</p>
-                  ) : (
-                    renderImageGrid(folderImages.items, folderImages.total)
-                  )
-                ) : (
-                  // Cluster images
-                  clusterImagesLoading ? (
-                    <div className="flex items-center justify-center h-32">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : !clusterDetail?.images.length ? (
-                    <p className="text-center text-muted-foreground py-8">No images in this cluster</p>
-                  ) : (
-                    renderImageGrid(clusterDetail.images, clusterDetail.images.length)
-                  )
-                )
-              ) : (
-                // Level 1: Folders and clusters grid
-                (foldersLoading || clustersLoading) ? (
-                  <div className="flex items-center justify-center h-32">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  </div>
-                ) : (
-                  <div className="space-y-5">
-                    {/* Folders */}
-                    {foldersData?.items && foldersData.items.length > 0 && (
-                      <div>
-                        <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Folders</h4>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                          {foldersData.items.map((folder) => (
-                            <button
-                              key={folder.id}
-                              onClick={() => openFolder(folder.id, folder.name)}
-                              className="group text-left rounded-lg border border-border hover:border-primary/50 overflow-hidden transition-colors"
-                            >
-                              <div className="aspect-square bg-muted/30 relative">
-                                {folder.cover_thumbnail_url ? (
-                                  <LibraryImage
-                                    src={getCoverUrl(folder.cover_thumbnail_url)!}
-                                    alt=""
-                                    className="w-full h-full object-cover"
-                                    loading="lazy"
-                                  />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center">
-                                    <FolderOpen className="h-8 w-8 text-muted-foreground/40" />
-                                  </div>
-                                )}
-                              </div>
-                              <div className="p-1.5">
-                                <p className="text-xs font-medium truncate">{folder.name}</p>
-                                <p className="text-[10px] text-muted-foreground">{folder.image_count} images</p>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Clusters */}
-                    {clustersData?.items && clustersData.items.length > 0 && (
-                      <div>
-                        <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Clusters</h4>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                          {clustersData.items.map((cluster) => (
-                            <button
-                              key={cluster.id}
-                              onClick={() => openCluster(cluster.id, cluster.display_name || cluster.summary_title || `Cluster #${cluster.id}`)}
-                              className="group text-left rounded-lg border border-border hover:border-primary/50 overflow-hidden transition-colors"
-                            >
-                              <div className="aspect-square bg-muted/30 relative">
-                                {cluster.cover_thumbnail_url ? (
-                                  <LibraryImage
-                                    src={getCoverUrl(cluster.cover_thumbnail_url)!}
-                                    alt=""
-                                    className="w-full h-full object-cover"
-                                    loading="lazy"
-                                  />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center">
-                                    <LayoutGrid className="h-8 w-8 text-muted-foreground/40" />
-                                  </div>
-                                )}
-                              </div>
-                              <div className="p-1.5">
-                                <p className="text-xs font-medium truncate">
-                                  {cluster.display_name || cluster.summary_title || `Cluster #${cluster.id}`}
-                                </p>
-                                <p className="text-[10px] text-muted-foreground">{cluster.size} images</p>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {(!foldersData?.items.length && !clustersData?.items.length) && (
-                      <p className="text-center text-muted-foreground py-8">No folders or clusters available</p>
-                    )}
-                  </div>
-                )
-              )
-            ) : (
-              // Generated tab — flat grid (usually smaller set)
-              generatedLoading ? (
-                <div className="flex items-center justify-center h-32">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : !generatedData?.items.length ? (
-                <p className="text-center text-muted-foreground py-8">No generated images available</p>
-              ) : (
-                <>
-                  {renderTiles(generatedData.items.map(img => ({
-                    id: img.id,
-                    type: 'generated' as const,
-                    thumbnail: generatedThumbUrl(img.thumbnail_uri_medium),
-                    full: generationApi.getImageUrl(img.id),
-                    width: img.width ?? undefined,
-                    height: img.height ?? undefined,
-                  })))}
-                  {generatedData.total > limit && (
-                    <div className="flex justify-center gap-2 mt-4">
-                      <button
-                        onClick={() => setPage(Math.max(0, page - 1))}
-                        disabled={page === 0}
-                        className="px-3 py-1 text-sm border border-border rounded-lg disabled:opacity-50"
-                      >
-                        Previous
-                      </button>
-                      <span className="px-3 py-1 text-sm text-muted-foreground">
-                        Page {page + 1} of {Math.ceil(generatedData.total / limit)}
-                      </span>
-                      <button
-                        onClick={() => setPage(page + 1)}
-                        disabled={(page + 1) * limit >= generatedData.total}
-                        className="px-3 py-1 text-sm border border-border rounded-lg disabled:opacity-50"
-                      >
-                        Next
-                      </button>
-                    </div>
+          <div className="flex min-h-0 flex-1 max-md:flex-col">
+            <nav
+              aria-label="Image collections"
+              className="flex w-52 shrink-0 flex-col gap-1 overflow-y-auto border-r p-2 max-md:w-full max-md:flex-row max-md:overflow-x-auto max-md:border-b max-md:border-r-0"
+            >
+              {[
+                { value: undefined, label: 'All images' },
+                { value: 'upload', label: 'Uploads' },
+                { value: 'generated', label: 'Generated' },
+                { value: 'edited', label: 'Edited' },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  className={cn(
+                    'shrink-0 rounded px-3 py-2 text-left text-xs',
+                    !isInsideCollection &&
+                      source === item.value &&
+                      'bg-accent'
                   )}
-                </>
-              )
-            )}
+                  onClick={() => {
+                    goBack();
+                    setSource(item.value);
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+              <span className="shrink-0 px-3 py-2 text-xs text-muted-foreground">
+                Folders
+              </span>
+              {foldersLoading ? (
+                <span className="text-xs">Loading…</span>
+              ) : (
+                foldersData?.items.map((folder) => (
+                  <button
+                    key={folder.id}
+                    className={cn(
+                      'shrink-0 rounded px-3 py-2 text-left text-xs',
+                      browseFolderId === folder.id && 'bg-accent'
+                    )}
+                    onClick={() => {
+                      setBrowseClusterId(null);
+                      openFolder(folder.id, folder.name);
+                    }}
+                  >
+                    {folder.name} ({folder.image_count})
+                  </button>
+                ))
+              )}
+              {foldersData && foldersData.total > 40 && (
+                <div className="flex shrink-0 gap-2 px-3 text-xs">
+                  {folderPage > 0 && (
+                    <button
+                      aria-label="Previous folders"
+                      onClick={() => setFolderPage(folderPage - 1)}
+                    >
+                      ←
+                    </button>
+                  )}
+                  {(folderPage + 1) * 40 < foldersData.total && (
+                    <button onClick={() => setFolderPage(folderPage + 1)}>
+                      More folders →
+                    </button>
+                  )}
+                </div>
+              )}
+              <span className="shrink-0 px-3 py-2 text-xs text-muted-foreground">
+                Clusters
+              </span>
+              {clustersLoading ? (
+                <span className="text-xs">Loading…</span>
+              ) : (
+                clustersData?.items.map((cluster) => (
+                  <button
+                    key={cluster.id}
+                    className={cn(
+                      'shrink-0 rounded px-3 py-2 text-left text-xs',
+                      browseClusterId === cluster.id && 'bg-accent'
+                    )}
+                    onClick={() => {
+                      setBrowseFolderId(null);
+                      openCluster(
+                        cluster.id,
+                        cluster.display_name ||
+                          cluster.summary_title ||
+                          `Cluster ${cluster.id}`
+                      );
+                    }}
+                  >
+                    {cluster.display_name ||
+                      cluster.summary_title ||
+                      `Cluster ${cluster.id}`}{' '}
+                    ({cluster.size})
+                  </button>
+                ))
+              )}
+              {clustersData && clustersData.total > 40 && (
+                <div className="flex shrink-0 gap-2 px-3 text-xs">
+                  {clusterPage > 0 && (
+                    <button
+                      aria-label="Previous clusters"
+                      onClick={() => setClusterPage(clusterPage - 1)}
+                    >
+                      ←
+                    </button>
+                  )}
+                  {(clusterPage + 1) * 40 < clustersData.total && (
+                    <button onClick={() => setClusterPage(clusterPage + 1)}>
+                      More clusters →
+                    </button>
+                  )}
+                </div>
+              )}
+            </nav>
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
+              <input
+                aria-label="Search this page"
+                placeholder="Search this page…"
+                className="mb-2 w-full rounded border bg-background px-3 py-2 text-sm"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              <p className="mb-3 text-xs text-muted-foreground">
+                Search filters the loaded page.
+              </p>
+              {(libraryLoading && !isInsideCollection) ||
+              (folderImagesLoading && browseFolderId != null) ||
+              (clusterImagesLoading && browseClusterId != null) ? (
+                <Loader2 className="mx-auto h-6 w-6 animate-spin" />
+              ) : browseFolderId != null ? (
+                renderImageGrid(
+                  folderImages?.items ?? [],
+                  folderImages?.total ?? 0
+                )
+              ) : browseClusterId != null ? (
+                renderImageGrid(
+                  (clusterDetail ?? []).slice(0, limit),
+                  (clusterDetail?.length ?? 0) > limit
+                    ? (page + 2) * limit
+                    : (page + 1) * limit
+                )
+              ) : (
+                renderImageGrid(
+                  libraryData?.items ?? [],
+                  libraryData?.total ?? 0
+                )
+              )}
+            </div>
           </div>
 
           {/* Footer */}
@@ -480,49 +583,97 @@ export default function ImagePickerModal({
               disabled={totalSelected === 0}
               className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium disabled:opacity-50"
             >
-              Done ({totalSelected})
+              Add {totalSelected} as sources
             </button>
           </div>
         </div>
       </div>
 
       {current && (
-        <div role="dialog" aria-modal="true" aria-label="Image preview" className="fixed inset-0 z-[60] flex flex-col bg-black text-white">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image preview"
+          className="fixed inset-0 z-[60] flex flex-col bg-black text-white"
+        >
           <div className="flex items-center justify-between p-3">
-            <span className="text-sm text-white/70">{preview!.index + 1} of {preview!.items.length}</span>
-            <button aria-label="Close preview" onClick={() => setPreview(null)} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/10">
+            <span className="text-sm text-white/70">
+              {preview!.index + 1} of {preview!.items.length}
+            </span>
+            <button
+              aria-label="Close preview"
+              onClick={() => setPreview(null)}
+              className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/10"
+            >
               <X className="h-5 w-5" />
             </button>
           </div>
           <div className="relative min-h-0 flex-1">
             {/* The thumbnail shows at once; the full image loads over it. */}
-            {current.thumbnail && <LibraryImage src={current.thumbnail} alt="" className="absolute inset-0 h-full w-full object-contain" />}
-            <LibraryImage key={current.full} src={current.full} alt={`Image ${current.id}`} className="absolute inset-0 h-full w-full object-contain" />
-            <button aria-label="Previous image" disabled={preview!.index === 0} onClick={() => setPreview({ ...preview!, index: preview!.index - 1 })} className="absolute left-2 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/50 hover:bg-black/70 disabled:opacity-30">
+            {current.thumbnail && (
+              <LibraryImage
+                src={current.thumbnail}
+                alt=""
+                className="absolute inset-0 h-full w-full object-contain"
+              />
+            )}
+            <LibraryImage
+              key={current.full}
+              src={current.full}
+              alt={`Image ${current.id}`}
+              className="absolute inset-0 h-full w-full object-contain"
+            />
+            <button
+              aria-label="Previous image"
+              disabled={preview!.index === 0}
+              onClick={() =>
+                setPreview({ ...preview!, index: preview!.index - 1 })
+              }
+              className="absolute left-2 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/50 hover:bg-black/70 disabled:opacity-30"
+            >
               <ChevronLeft className="h-6 w-6" />
             </button>
-            <button aria-label="Next image" disabled={preview!.index === preview!.items.length - 1} onClick={() => setPreview({ ...preview!, index: preview!.index + 1 })} className="absolute right-2 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/50 hover:bg-black/70 disabled:opacity-30">
+            <button
+              aria-label="Next image"
+              disabled={preview!.index === preview!.items.length - 1}
+              onClick={() =>
+                setPreview({ ...preview!, index: preview!.index + 1 })
+              }
+              className="absolute right-2 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/50 hover:bg-black/70 disabled:opacity-30"
+            >
               <ChevronRight className="h-6 w-6" />
             </button>
           </div>
           <div className="flex items-center justify-end gap-3 p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
-            {alreadySelectedIds.includes(current.id) ? (
+            {isAlreadySelected(current.id, current.type) ? (
               <span className="text-sm text-white/70">Already added</span>
             ) : (
               <button
-                onClick={() => toggleImage(current.id, current.type, current.thumbnail, current)}
-                disabled={!isSelectedId(current.id) && remaining <= 0}
+                onClick={() =>
+                  toggleImage(
+                    current.id,
+                    current.type,
+                    current.thumbnail,
+                    current
+                  )
+                }
+                disabled={
+                  !isSelectedId(current.id, current.type) && remaining <= 0
+                }
                 className="min-h-10 rounded-lg border border-white/30 px-4 text-sm hover:bg-white/10 disabled:opacity-40"
               >
-                {isSelectedId(current.id) ? 'Unselect' : 'Select'}
+                {isSelectedId(current.id, current.type) ? 'Unselect' : 'Select'}
               </button>
             )}
             <button
-              onClick={() => { setPreview(null); handleDone(); }}
+              onClick={() => {
+                setPreview(null);
+                handleDone();
+              }}
               disabled={totalSelected === 0}
               className="min-h-10 rounded-lg bg-white px-4 text-sm font-medium text-black disabled:opacity-40"
             >
-              Done ({totalSelected})
+              Add {totalSelected} as sources
             </button>
           </div>
         </div>

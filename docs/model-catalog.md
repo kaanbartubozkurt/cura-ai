@@ -71,6 +71,18 @@ Prices are default-option estimates per call. Variable price tables and LoRA rat
 
 LoRA generation endpoints: `fal-ai/flux-2/lora` ($0.021) and `fal-ai/qwen-image-2512/lora` ($0.035). Training bases remain FLUX.2 and Qwen Image 2512. Flat estimates approximate endpoints whose pricing varies by output size or options.
 
+## Edit jobs
+
+Edit asks for the job first, then shows only models that can do it (`jobs` on each catalog entry, exposed by the catalog API). Every edit model can **Describe the change**. The other jobs (catalog state on 2026-11-16):
+
+| Job | Catalog key | Models |
+|---|---|---|
+| Paint an area | `paint` | `gpt-image-2-edit`, `gpt-image-2.5-flare-edit`, `gpt-image-2.5-sunburst-edit`, `ideogram-v4.5-edit` |
+| Arrange objects | `objects` | `flux-3-klein-edit` |
+| Keep a subject | `subject` | `kling-image` |
+
+Source-image limits per model are `max_source_images` in the catalog (the lower of SightLab's limit and the provider's published one).
+
 ## Defaults and removals
 
 Defaults are `anthropic/claude-haiku-5.5` for language and vision, `nano-banana-pro` for generation and `nano-banana-2.1-edit` for editing. All 17 language models passed both text and vision; all 17 generation and 17 edit models passed.

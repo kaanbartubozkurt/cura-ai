@@ -137,7 +137,7 @@ module "container_apps" {
   celery_worker_concurrency  = 4
 
   celery_clustering_min_replicas = 1
-  celery_clustering_max_replicas = 2
+  celery_clustering_max_replicas = 1 # runs Celery Beat (-B): must stay a single replica
   celery_clustering_cpu          = 2.0
   celery_clustering_memory       = "4Gi"
 

@@ -220,7 +220,9 @@ class FolderService:
             if max_status == ImageStatus.EMBEDDED:
                 missing = Image.status == ImageStatus.FAILED
             query = query.filter(Image.status.in_(eligible) | ((Image.status == ImageStatus.FAILED) & missing))
-        return query.order_by(FolderImage.added_at.desc()).offset(skip).limit(limit).all()
+        # Tie-break on id: bulk uploads share added_at, and an unstable order makes
+        # offset pages skip or repeat images.
+        return query.order_by(FolderImage.added_at.desc(), FolderImage.id.desc()).offset(skip).limit(limit).all()
 
     def count_folder_images(
         self,

@@ -14,6 +14,19 @@ from app.services.storage import get_storage_service
 logger = logging.getLogger(__name__)
 
 
+def image_dimensions(image_data: bytes, width: int | None, height: int | None) -> tuple[int | None, int | None]:
+    """Real pixel size of an image, falling back to the reported size if it can't be decoded."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image as PILImage
+
+        with PILImage.open(BytesIO(image_data)) as decoded:
+            return decoded.size
+    except Exception:
+        return width, height
+
+
 class GenerationService:
     """Service for LoRA model and generated image CRUD operations."""
 
@@ -215,7 +228,9 @@ class GenerationService:
         # Generate thumbnails
         thumbnails = await self.storage.generate_generated_thumbnails(image_data, object_key)
 
-        # Update record
+        # Update record. Prefer the decoded size: several fal edit models report no
+        # width/height, and the result grids need the real shape (see image_dimensions).
+        width, height = image_dimensions(image_data, width, height)
         gen.object_key = object_key
         gen.width = width
         gen.height = height

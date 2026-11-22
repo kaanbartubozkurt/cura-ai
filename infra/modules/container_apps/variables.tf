@@ -112,9 +112,14 @@ variable "celery_clustering_min_replicas" {
 }
 
 variable "celery_clustering_max_replicas" {
-  description = "Maximum replicas for celery clustering worker"
+  description = "Maximum replicas for celery clustering worker (it also runs Celery Beat, so exactly 1)"
   type        = number
   default     = 1
+
+  validation {
+    condition     = var.celery_clustering_max_replicas == 1
+    error_message = "The clustering worker runs Celery Beat (-B); more than one replica would run every scheduled task more than once."
+  }
 }
 
 variable "celery_clustering_cpu" {

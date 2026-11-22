@@ -5,15 +5,16 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { clustersApi, foldersApi, imagesApi } from '@/lib/api';
+import { DISCORD_INVITE_URL } from '@/lib/links';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import LibraryImage from './LibraryImage';
 import LibraryThumbnail from './LibraryThumbnail';
 import { clusterTitle } from './ClusterTools';
 
-function Row({ href, title, description }: { href: string; title: string; description?: string }) {
+function Row({ href, title, description, external = false }: { href: string; title: string; description?: string; external?: boolean }) {
   return (
-    <Link href={href} className="flex min-h-[72px] items-center gap-3 border-b border-border py-3">
+    <Link href={href} target={external ? '_blank' : undefined} rel={external ? 'noopener noreferrer' : undefined} className="flex min-h-[72px] items-center gap-3 border-b border-border py-3">
       <div className="min-w-0 flex-1">
         <span className="block font-medium">{title}</span>
         {description && <span className="block text-sm text-muted-foreground">{description}</span>}
@@ -96,8 +97,8 @@ export default function MobileHub({ kind }: { kind: 'collection' | 'studio' | 'a
         <>
           <Row href="/billing" title="Billing" />
           <Row href="/jobs" title="Jobs and activity" />
-          <Row href="/notifications" title="Notifications" />
-          <Row href="/settings" title="Settings" />
+          <Row href="/settings" title="Settings and notifications" />
+          <Row href={DISCORD_INVITE_URL} title="Join our Discord" external />
           {user?.role === 'admin' && <Row href="/admin" title="Admin" />}
           {user?.role === 'admin' && <Row href="/debug" title="Debug" />}
           <label className="flex min-h-16 items-center justify-between gap-4">

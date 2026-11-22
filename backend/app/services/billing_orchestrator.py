@@ -3,6 +3,7 @@
 Every billable operation gets a CostDecision record BEFORE the provider call,
 with full request/response snapshots for end-to-end traceability.
 """
+import json
 import logging
 from datetime import datetime
 from decimal import Decimal
@@ -356,7 +357,7 @@ class BillingOrchestrator:
             self._create_anomaly(
                 "zero_cost_actual", decision.provider, decision.model, decision.operation,
                 {"decision_id": decision_id, "raw_cost": str(raw_cost),
-                 "charged_cost": str(charged_cost), "sparks": sparks},
+                 "charged_cost": str(charged_cost), "sparks": str(sparks)},
             )
             exc = ZeroCostActualError(
                 f"Zero sparks for decision {decision_id}: "
@@ -591,16 +592,20 @@ class BillingOrchestrator:
         try:
             from app.models.billing import BillingAnomaly
 
-            anomaly = BillingAnomaly(
-                user_id=self.user_id,
-                anomaly_type=anomaly_type,
-                provider=provider,
-                model=model,
-                operation=operation,
-                detail=detail or {},
-            )
-            self.db.add(anomaly)
-            self.db.flush()
+            # JSON-safe detail (e.g. Decimal sparks) and a savepoint: a failure here must
+            # never roll back the caller's transaction and fail the image being processed.
+            safe_detail = json.loads(json.dumps(detail or {}, default=str))
+            with self.db.begin_nested():
+                anomaly = BillingAnomaly(
+                    user_id=self.user_id,
+                    anomaly_type=anomaly_type,
+                    provider=provider,
+                    model=model,
+                    operation=operation,
+                    detail=safe_detail,
+                )
+                self.db.add(anomaly)
+                self.db.flush()
 
             _bm.anomaly_total.add(1, {
                 "anomaly_type": anomaly_type,

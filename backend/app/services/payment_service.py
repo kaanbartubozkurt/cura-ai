@@ -113,8 +113,9 @@ class PaymentService:
         success_url: str,
         cancel_url: str,
         ip_address: str | None = None,
+        flow: str = "redirect",
     ) -> dict:
-        """Create a checkout session and return the checkout URL."""
+        """Create a checkout session and return the checkout URL (and the provider's order id)."""
         if self.user_id is None:
             raise ValueError("user_id is required for checkout")
 
@@ -127,13 +128,14 @@ class PaymentService:
         # Fraud guardrails
         self._check_fraud_guardrails(pack)
 
+        gateway = get_payment_gateway()
         purchase_id = uuid.uuid4()
 
         # Create pending transaction
         txn = PaymentTransaction(
             purchase_id=purchase_id,
             user_id=self.user_id,
-            provider="lemon_squeezy",
+            provider=gateway.name,
             amount_cents=pack.price_cents,
             currency=pack.currency,
             pack_id=pack.id,
@@ -144,16 +146,22 @@ class PaymentService:
         self.db.commit()
         self.db.refresh(txn)
 
-        # Call payment gateway
-        gateway = get_payment_gateway()
-        result = await gateway.create_checkout_session(
-            pack=pack,
-            purchase_id=purchase_id,
-            user_id=self.user_id,
-            user_email=user_email,
-            success_url=success_url,
-            cancel_url=cancel_url,
-        )
+        try:
+            extra = {"flow": flow} if gateway.name == self.PAYPAL else {}
+            result = await gateway.create_checkout_session(
+                pack=pack,
+                purchase_id=purchase_id,
+                user_id=self.user_id,
+                user_email=user_email,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                **extra,
+            )
+        except Exception:
+            # Nothing was charged; don't let the attempt count against the hourly limit.
+            txn.status = PaymentStatus.FAILED
+            self.db.commit()
+            raise
 
         # Update transaction with session info
         txn.provider_session_id = result.provider_session_id
@@ -184,6 +192,7 @@ class PaymentService:
         return {
             "checkout_url": result.checkout_url,
             "purchase_id": str(purchase_id),
+            "order_id": result.provider_session_id,
         }
 
     # --- Manual PayPal claims (interim flow while LS approval is pending) ---
@@ -197,15 +206,23 @@ class PaymentService:
 
         settings = get_settings()
         try:
-            get_payment_gateway()
+            provider = get_payment_gateway().name
             automated = True
         except PaymentsNotConfiguredError:
+            provider = None
             automated = False
 
+        # The manual paypal.me claim form is only a fallback for when no
+        # automated checkout is configured.
+        manual = bool(settings.paypal_me_url) and not automated
+        paypal = provider == self.PAYPAL
         return {
             "automated": automated,
-            "manual_enabled": bool(settings.paypal_me_url),
-            "paypal_me_url": settings.paypal_me_url,
+            "provider": provider,
+            # Public by design: PayPal's buttons on our checkout page need it.
+            "paypal_client_id": settings.paypal_client_id if paypal else None,
+            "manual_enabled": manual,
+            "paypal_me_url": settings.paypal_me_url if manual else "",
         }
 
     def create_manual_claim(
@@ -599,6 +616,347 @@ class PaymentService:
         elif event_name == "subscription_payment_failed":
             sub_svc.handle_subscription_payment_failed(data, webhook_event)
 
+    # --- PayPal Checkout (#167) ---
+
+    PAYPAL = "paypal"
+    # Capture failures where the buyer can simply try again with another card or account.
+    DECLINED_ERRORS = {"INSTRUMENT_DECLINED", "TRANSACTION_REFUSED", "PAYER_ACTION_REQUIRED",
+                       "PAYER_CANNOT_PAY", "MAX_NUMBER_OF_PAYMENT_ATTEMPTS_EXCEEDED"}
+
+    def _paypal_gateway(self):
+        from app.services.payment_gateway import PayPalGateway
+
+        gateway = get_payment_gateway()
+        if not isinstance(gateway, PayPalGateway):
+            raise ValueError("PayPal checkout is not configured")
+        return gateway
+
+    def _pack_sparks(self, txn: PaymentTransaction) -> tuple[SparkPack, Decimal]:
+        pack = self.db.query(SparkPack).filter(SparkPack.id == txn.pack_id).first()
+        if not pack:
+            raise ValueError(f"Pack {txn.pack_id} not found")
+        return pack, Decimal(pack.sparks_amount + pack.bonus_sparks)
+
+    def _locked(self, txn: PaymentTransaction) -> PaymentTransaction:
+        """Re-read a purchase under a row lock so concurrent completions run one at a time."""
+        return (
+            self.db.query(PaymentTransaction)
+            .filter(PaymentTransaction.id == txn.id)
+            .with_for_update()
+            .populate_existing()
+            .one()
+        )
+
+    def _outcome(self, txn: PaymentTransaction, status: str | None = None, **extra) -> dict:
+        pack = self.db.query(SparkPack).filter(SparkPack.id == txn.pack_id).first()
+        return {
+            "status": status or txn.status.value,
+            "purchase_id": str(txn.purchase_id),
+            "pack_name": pack.name if pack else "Unknown",
+            "sparks": (pack.sparks_amount + pack.bonus_sparks) if pack else 0,
+            "amount_cents": txn.amount_cents,
+            "currency": txn.currency,
+            "payment_reference": txn.provider_payment_id,
+            **extra,
+        }
+
+    def _complete_purchase(
+        self,
+        txn: PaymentTransaction,
+        provider_payment_id: str,
+        webhook_event: PaymentWebhookEvent | None = None,
+        fee_cents: int | None = None,
+    ) -> bool:
+        """Credit the pack's sparks exactly once. Returns False if it was already credited.
+
+        The row lock serializes the buyer's return and PayPal's notification;
+        the status is set in the same commit as the credit, so the second one
+        always sees COMPLETED.
+        """
+        txn = self._locked(txn)
+        if txn.status in (PaymentStatus.COMPLETED, PaymentStatus.REFUNDED, PaymentStatus.DISPUTED):
+            self.db.commit()
+            return False
+        pack, total_sparks = self._pack_sparks(txn)
+
+        txn.status = PaymentStatus.COMPLETED
+        txn.provider_payment_id = provider_payment_id
+        txn.completed_at = datetime.utcnow()
+        if webhook_event is not None:
+            txn.webhook_event_id = webhook_event.id
+        balance_txn = BillingService(self.db, txn.user_id).add_credits(
+            amount=total_sparks,
+            description=f"Purchased {pack.name} pack ({pack.sparks_amount:,} + {pack.bonus_sparks:,} bonus sparks)",
+        )
+        txn.balance_txn_id = balance_txn.id
+        self.db.commit()
+
+        logger.info("Purchase completed: user=%d pack=%s sparks=%s purchase_id=%s provider=%s",
+                    txn.user_id, pack.name, total_sparks, txn.purchase_id, txn.provider)
+        fee = f", PayPal fee ${fee_cents / 100:.2f}" if fee_cents is not None else ""
+        self._alert(f"💸 New purchase: {pack.name} pack, ${txn.amount_cents / 100:.2f} "
+                    f"(user #{txn.user_id}{fee}). {int(total_sparks):,} sparks credited.")
+        return True
+
+    def _alert(self, message: str) -> None:
+        from app.core.config import get_settings
+        from app.services.discord_alerts import send_alert
+
+        try:
+            send_alert(message, get_settings())
+        except Exception:
+            logger.warning("Payment Discord alert failed", exc_info=True)
+
+    @staticmethod
+    def _first_capture(order: dict) -> dict | None:
+        for unit in order.get("purchase_units") or []:
+            captures = (unit.get("payments") or {}).get("captures") or []
+            if captures:
+                return captures[0]
+        return None
+
+    def _apply_capture(
+        self, txn: PaymentTransaction, capture: dict | None,
+        webhook_event: PaymentWebhookEvent | None = None,
+    ) -> dict:
+        """Act on a PayPal capture: credit, wait, or mark failed."""
+        from app.services.payment_gateway import value_to_cents
+
+        if capture is None:
+            return self._outcome(txn, "pending")
+        status = capture.get("status")
+        if status in ("COMPLETED", "PARTIALLY_REFUNDED", "REFUNDED"):
+            amount = capture.get("amount") or {}
+            paid = value_to_cents(amount.get("value"))
+            if paid != txn.amount_cents or (amount.get("currency_code") or txn.currency) != txn.currency:
+                msg = (f"PayPal capture {capture.get('id')} for purchase {txn.purchase_id} is "
+                       f"{amount.get('value')} {amount.get('currency_code')}, expected "
+                       f"{txn.amount_cents / 100:.2f} {txn.currency}; no sparks credited")
+                logger.error(msg)
+                self._alert(f"⚠️ {msg}. Check it in PayPal.")
+                raise ValueError("Payment amount does not match the pack price")
+            breakdown = capture.get("seller_receivable_breakdown") or {}
+            fee = (breakdown.get("paypal_fee") or {}).get("value")
+            self._complete_purchase(txn, capture["id"], webhook_event,
+                                    fee_cents=value_to_cents(fee) if fee else None)
+            return self._outcome(self._locked(txn))
+        if status == "PENDING":
+            reason = (capture.get("status_details") or {}).get("reason")
+            logger.info("PayPal capture pending: purchase=%s reason=%s", txn.purchase_id, reason)
+            return self._outcome(txn, "pending", reason=reason)
+        # DECLINED or FAILED: nothing was charged.
+        txn = self._locked(txn)
+        if txn.status == PaymentStatus.PENDING:
+            txn.status = PaymentStatus.FAILED
+        self.db.commit()
+        return self._outcome(txn, "declined")
+
+    def _paypal_txn_for_order(self, order_id: str) -> PaymentTransaction:
+        query = self.db.query(PaymentTransaction).filter(
+            PaymentTransaction.provider == self.PAYPAL,
+            PaymentTransaction.provider_session_id == order_id,
+        )
+        if self.user_id is not None:
+            query = query.filter(PaymentTransaction.user_id == self.user_id)
+        txn = query.first()
+        if not txn:
+            raise ValueError("We couldn't find this PayPal payment on your account. If you paid, your sparks "
+                             "will be added automatically within a few minutes.")
+        return txn
+
+    async def capture_paypal_order(self, order_id: str) -> dict:
+        """The buyer is back from PayPal: capture the order and credit the sparks."""
+        from app.services.payment_gateway import PayPalError
+
+        txn = self._paypal_txn_for_order(order_id)
+        if txn.status in (PaymentStatus.COMPLETED, PaymentStatus.REFUNDED, PaymentStatus.DISPUTED):
+            return self._outcome(txn)
+        gateway = self._paypal_gateway()
+        try:
+            order = await gateway.capture_order(order_id)
+        except PayPalError as e:
+            if e.name in self.DECLINED_ERRORS:
+                return self._apply_capture(txn, {"status": "DECLINED"})
+            if e.name == "ORDER_NOT_APPROVED":
+                return self._outcome(txn, "not_approved")
+            raise
+        return self._apply_capture(txn, self._first_capture(order))
+
+    def cancel_paypal_order(self, order_id: str) -> dict:
+        """The buyer cancelled on PayPal. Nothing was charged; free up their attempt."""
+        txn = self._locked(self._paypal_txn_for_order(order_id))
+        if txn.status == PaymentStatus.PENDING:
+            txn.status = PaymentStatus.EXPIRED
+        self.db.commit()
+        return self._outcome(txn, "cancelled" if txn.status == PaymentStatus.EXPIRED else None)
+
+    def _reverse_to_refunded_total(
+        self, txn: PaymentTransaction, refunded_total_cents: int, final_status: PaymentStatus,
+        reason: str,
+    ) -> int:
+        """Take back the sparks for money PayPal returned, up to ``refunded_total_cents`` in all.
+
+        Driven by PayPal's running total, so the admin refund call and the
+        refund notification can both arrive without reversing twice. The
+        balance may go negative (sparks already spent); new jobs then need a
+        top-up first. Returns the sparks removed now.
+        """
+        from app.models.billing import BalanceTransaction, TransactionType, UserBalance
+
+        txn = self._locked(txn)
+        already = txn.refunded_amount_cents or 0
+        refunded_total_cents = min(refunded_total_cents, txn.amount_cents)
+        if refunded_total_cents <= already:
+            self.db.commit()
+            return 0
+        pack, total_sparks = self._pack_sparks(txn)
+
+        def reversed_for(cents: int) -> Decimal:
+            if cents >= txn.amount_cents:
+                return total_sparks
+            return (total_sparks * cents / txn.amount_cents).quantize(Decimal("1"))
+
+        sparks = reversed_for(refunded_total_cents) - reversed_for(already)
+        balance = self.db.query(UserBalance).filter(UserBalance.user_id == txn.user_id).first()
+        if balance:
+            balance.balance -= sparks
+            balance.balance_sparks -= sparks
+        self.db.add(BalanceTransaction(
+            user_id=txn.user_id,
+            amount=-sparks,
+            amount_sparks=-sparks,
+            transaction_type=TransactionType.ADJUSTMENT,
+            description=f"{reason}: {pack.name} pack",
+        ))
+        txn.refunded_amount_cents = refunded_total_cents
+        if refunded_total_cents >= txn.amount_cents:
+            txn.status = final_status
+        self.db.commit()
+
+        left = balance.balance_sparks if balance else Decimal(0)
+        logger.info("%s: user=%d pack=%s sparks=-%s refunded_total=%d", reason, txn.user_id, pack.name,
+                    sparks, refunded_total_cents)
+        self._alert(f"↩️ {reason}: {pack.name} pack, ${refunded_total_cents / 100:.2f} of "
+                    f"${txn.amount_cents / 100:.2f} (user #{txn.user_id}). {int(sparks):,} sparks removed"
+                    + (f"; balance is now {left:,.0f} sparks." if left < 0 else "."))
+        return int(sparks)
+
+    @staticmethod
+    def _trim_paypal_event(event: dict) -> dict:
+        """What we keep of a PayPal notification: ids, statuses and amounts, no payer details."""
+        resource = event.get("resource") or {}
+        keep = {k: resource.get(k) for k in ("id", "status", "custom_id", "invoice_id", "amount",
+                                              "seller_receivable_breakdown", "seller_payable_breakdown",
+                                              "status_details", "intent") if k in resource}
+        units = resource.get("purchase_units")
+        if units:
+            keep["purchase_units"] = [{"custom_id": u.get("custom_id"), "amount": u.get("amount")} for u in units]
+        links = [link for link in resource.get("links") or [] if link.get("rel") == "up"]
+        if links:
+            keep["links"] = links
+        return {"id": event.get("id"), "event_type": event.get("event_type"),
+                "resource_type": event.get("resource_type"), "create_time": event.get("create_time"),
+                "resource": keep}
+
+    def _paypal_txn_by_purchase(self, purchase_id: str | None) -> PaymentTransaction | None:
+        if not purchase_id:
+            return None
+        try:
+            key = uuid.UUID(purchase_id)
+        except ValueError:
+            return None
+        return self.db.query(PaymentTransaction).filter(PaymentTransaction.purchase_id == key).first()
+
+    @staticmethod
+    def _capture_id_from_links(resource: dict) -> str | None:
+        for link in resource.get("links") or []:
+            if link.get("rel") == "up" and "/captures/" in link.get("href", ""):
+                return link["href"].rstrip("/").rsplit("/", 1)[-1]
+        return None
+
+    async def handle_paypal_webhook(self, payload: bytes, headers) -> dict:
+        """A notification from PayPal: verify it with PayPal, then act on it once."""
+        from app.services.payment_gateway import value_to_cents
+
+        gateway = self._paypal_gateway()
+        event = await gateway.verify_notification(payload, headers)
+        event_id = str(event.get("id") or "")
+        event_type = event.get("event_type", "unknown")
+        if not event_id:
+            raise ValueError("PayPal event has no id")
+
+        existing = self.db.query(PaymentWebhookEvent).filter(
+            PaymentWebhookEvent.provider_event_id == event_id
+        ).first()
+        if existing and existing.processed:
+            return {"status": "already_processed"}
+        webhook_event = existing or PaymentWebhookEvent(
+            provider=self.PAYPAL, event_type=event_type, provider_event_id=event_id,
+            payload=self._trim_paypal_event(event),
+        )
+        if not existing:
+            # Committed first, so a processing error below can still be recorded on it.
+            self.db.add(webhook_event)
+            self.db.commit()
+
+        resource = event.get("resource") or {}
+        try:
+            if event_type == "CHECKOUT.ORDER.APPROVED":
+                # The buyer approved but may never come back to SightLab: capture it ourselves.
+                units = resource.get("purchase_units") or [{}]
+                txn = self._paypal_txn_by_purchase(units[0].get("custom_id"))
+                if txn and txn.status in (PaymentStatus.PENDING, PaymentStatus.EXPIRED):
+                    from app.services.payment_gateway import PayPalError
+
+                    try:
+                        order = await gateway.capture_order(resource["id"])
+                        self._apply_capture(txn, self._first_capture(order), webhook_event)
+                    except PayPalError as e:
+                        if e.name not in self.DECLINED_ERRORS:
+                            raise
+                        self._apply_capture(txn, {"status": "DECLINED"}, webhook_event)
+            elif event_type == "PAYMENT.CAPTURE.COMPLETED":
+                txn = self._paypal_txn_by_purchase(resource.get("custom_id"))
+                if txn:
+                    self._apply_capture(txn, resource, webhook_event)
+            elif event_type in ("PAYMENT.CAPTURE.DENIED", "PAYMENT.CAPTURE.DECLINED"):
+                txn = self._paypal_txn_by_purchase(resource.get("custom_id"))
+                if txn:
+                    self._apply_capture(txn, {"status": "DECLINED"}, webhook_event)
+            elif event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED"):
+                capture_id = self._capture_id_from_links(resource)
+                txn = self.db.query(PaymentTransaction).filter(
+                    PaymentTransaction.provider_payment_id == capture_id
+                ).first() if capture_id else self._paypal_txn_by_purchase(resource.get("custom_id"))
+                if txn:
+                    total = ((resource.get("seller_payable_breakdown") or {}).get("total_refunded_amount")
+                             or resource.get("amount") or {}).get("value")
+                    reversal = event_type.endswith("REVERSED")
+                    self._reverse_to_refunded_total(
+                        txn, value_to_cents(total),
+                        PaymentStatus.DISPUTED if reversal else PaymentStatus.REFUNDED,
+                        "PayPal reversal (dispute or chargeback)" if reversal else "Refund",
+                    )
+            else:
+                logger.info("Unhandled PayPal event: %s", event_type)
+
+            stored = self.db.query(PaymentWebhookEvent).filter(
+                PaymentWebhookEvent.provider_event_id == event_id).one()
+            stored.processed = True
+            stored.processing_error = None
+            self.db.commit()
+            return {"status": "processed", "event": event_type}
+        except Exception as e:
+            self.db.rollback()
+            stored = self.db.query(PaymentWebhookEvent).filter(
+                PaymentWebhookEvent.provider_event_id == event_id).one()
+            stored.processing_error = str(e)[:2000]
+            self.db.commit()
+            logger.exception("PayPal webhook processing error for %s (%s)", event_id, event_type)
+            if sentry_sdk:
+                sentry_sdk.capture_exception(e)
+            raise
+
     # --- Purchase history ---
 
     def get_purchases(self, skip: int = 0, limit: int = 50) -> dict:
@@ -633,7 +991,10 @@ class PaymentService:
                         else 0
                     ),
                     "amount_cents": t.amount_cents,
+                    "refunded_amount_cents": t.refunded_amount_cents or 0,
                     "currency": t.currency,
+                    "provider": t.provider,
+                    "payment_reference": t.provider_payment_id if t.status != PaymentStatus.PENDING else None,
                     "status": t.status.value,
                     "created_at": t.created_at.isoformat(),
                     "completed_at": t.completed_at.isoformat() if t.completed_at else None,
@@ -676,8 +1037,17 @@ class PaymentService:
                     "user_id": t.user_id,
                     "user_email": users.get(t.user_id, ""),
                     "pack_name": packs[t.pack_id].name if t.pack_id in packs else "Unknown",
+                    "sparks_amount": (
+                        packs[t.pack_id].sparks_amount + packs[t.pack_id].bonus_sparks
+                        if t.pack_id in packs else 0
+                    ),
                     "amount_cents": t.amount_cents,
+                    "refunded_amount_cents": t.refunded_amount_cents or 0,
                     "currency": t.currency,
+                    "provider": t.provider,
+                    "payment_reference": t.provider_payment_id,
+                    "refundable": t.status == PaymentStatus.COMPLETED and t.provider == "paypal"
+                    and bool(t.provider_payment_id),
                     "status": t.status.value,
                     "created_at": t.created_at.isoformat(),
                     "completed_at": t.completed_at.isoformat() if t.completed_at else None,
@@ -725,6 +1095,16 @@ class PaymentService:
             raise ValueError("No provider payment ID — cannot refund")
 
         gateway = get_payment_gateway()
+        if txn.provider == self.PAYPAL:
+            result = await gateway.create_refund(txn.provider_payment_id, None)
+            if not result.success:
+                raise ValueError(f"Refund failed: {result.error}")
+            # Take the sparks back now; the REFUNDED notification that follows
+            # sees the same running total and changes nothing.
+            removed = self._reverse_to_refunded_total(txn, txn.amount_cents, PaymentStatus.REFUNDED,
+                                                      "Refund")
+            return {"status": "refunded", "payment_id": payment_id, "sparks_removed": removed}
+
         result = await gateway.create_refund(txn.provider_payment_id, txn.amount_cents)
         if not result.success:
             raise ValueError(f"Refund failed: {result.error}")

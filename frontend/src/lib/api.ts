@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { recordApiTiming, normalizeTimingPath } from './loadTimings';
 import type {
   ModelCatalog,
   AdminUserBalance,
@@ -39,6 +40,9 @@ import type {
   MetricsResponse,
   ModelBulkUpdateRequest,
   PipelineStats,
+  ScopeStats,
+  EditRecipe,
+  ClusterRunParams,
   PlatformUsageSummary,
   ProcessingCostResponse,
   PromptPreset,
@@ -61,6 +65,10 @@ import type {
   SparkPack,
   PurchaseListResponse,
   PaymentConfig,
+  PayPalOutcome,
+  SampleLibrary,
+  PublicPrices,
+  AdminPurchase,
   ManualClaimListResponse,
   SubscriptionPlan,
   UserSubscription,
@@ -125,6 +133,7 @@ const SLOW_REQUEST_THRESHOLD = 2000;
 // Extract meaningful error messages + handle 401 with token refresh
 api.interceptors.response.use(
   (response) => {
+    recordApiTiming(response.config, response.status);
     // Capture correlation IDs from response headers
     const traceId = response.headers['x-trace-id'];
     if (traceId) lastTraceId = traceId;
@@ -135,7 +144,7 @@ api.interceptors.response.use(
       const duration = Date.now() - startTime;
       if (duration > SLOW_REQUEST_THRESHOLD) {
         import('@/lib/observability').then(({ trackSlowRequest }) => {
-          trackSlowRequest(response.config.url || '', response.config.method || 'get', duration);
+          trackSlowRequest(normalizeTimingPath(response.config.url || ''), response.config.method || 'get', duration);
         });
       }
     }
@@ -143,13 +152,14 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
+    recordApiTiming(error.config, error.response?.status);
     // Track slow failed requests
     const startTime = error.config?.metadata?.startTime;
     if (startTime) {
       const duration = Date.now() - startTime;
       if (duration > SLOW_REQUEST_THRESHOLD) {
         import('@/lib/observability').then(({ trackSlowRequest }) => {
-          trackSlowRequest(error.config?.url || '', error.config?.method || 'get', duration);
+          trackSlowRequest(normalizeTimingPath(error.config?.url || ''), error.config?.method || 'get', duration);
         });
       }
     }
@@ -207,9 +217,10 @@ api.interceptors.response.use(
 // Helper to append auth token to static file URLs (img src, etc.)
 export function authUrl(url: string): string {
   const token = localStorage.getItem('access_token');
-  if (!token) return url;
   const base = process.env.NEXT_PUBLIC_API_URL || '';
   const fullUrl = url.startsWith('/') ? `${base}${url}` : url;
+  // Public pages (sample library) have no token but still need the API origin.
+  if (!token) return fullUrl;
   const sep = fullUrl.includes('?') ? '&' : '?';
   return `${fullUrl}${sep}token=${token}`;
 }
@@ -439,6 +450,12 @@ export const imagesApi = {
     return data;
   },
 
+  /** Inspector stats scoped to the library, one folder or one cluster. */
+  getScopeStats: async (scope: { folder_id?: number; cluster_id?: number } = {}): Promise<ScopeStats> => {
+    const { data } = await api.get('/images/scope-stats', { params: scope });
+    return data;
+  },
+
   getThumbnailUrl: (filename: string): string => {
     return authUrl(`/api/images/thumbnails/${filename}`);
   },
@@ -608,6 +625,16 @@ export const clustersApi = {
     return data;
   },
 
+  /** Cluster one folder or a set of images. New clusters are added; existing ones stay. */
+  clusterImages: async (scope: {
+    folder_id?: number;
+    image_ids?: number[];
+    params?: ClusterRunParams;
+  }): Promise<{ job_id: number; message: string }> => {
+    const { data } = await api.post('/clusters/recluster', scope);
+    return data;
+  },
+
   summarizeAll: async (): Promise<{ job_id: number }> => {
     const { data } = await api.post('/clusters/summarize-all');
     return data;
@@ -699,8 +726,9 @@ export const jobsApi = {
     return data;
   },
 
-  reprocessSelected: async (imageIds: number[]): Promise<{ job_id: number; total: number }> => {
-    const { data } = await api.post('/jobs/pipeline/reprocess-selected', { image_ids: imageIds });
+  /** Tag, describe and embed these images; `model` overrides the default vision model for this batch. */
+  reprocessSelected: async (imageIds: number[], model?: string): Promise<{ job_id: number; total: number }> => {
+    const { data } = await api.post('/jobs/pipeline/reprocess-selected', { image_ids: imageIds, ...(model ? { model } : {}) });
     return data;
   },
 
@@ -716,7 +744,16 @@ export const jobsApi = {
 };
 
 // Settings API
+export type CreateChoices = Record<string, string | number | boolean>;
+
 export const settingsApi = {
+  getCreateChoices: async (): Promise<Record<string, CreateChoices>> => {
+    const { data } = await api.get('/settings/create-choices');
+    return data;
+  },
+  putCreateChoices: async (model: string, choices: CreateChoices) => {
+    await api.put(`/settings/create-choices/${encodeURIComponent(model)}`, choices);
+  },
   getModelCatalog: async (): Promise<ModelCatalog> => (await api.get('/settings/model-catalog')).data,
   getPrompts: async (): Promise<{
     description_prompt: string;
@@ -1069,6 +1106,7 @@ export const generationApi = {
   },
 
   listImages: async (params?: {
+    mode?: 'generate' | 'edit';
     lora_model_id?: number;
     status?: string;
     skip?: number;
@@ -1209,6 +1247,16 @@ export const editApi = {
   getImageUrl: (id: number): string => {
     return authUrl(`/api/edit/images/${id}/file`);
   },
+
+  /** Everything needed to reopen Edit as it was for this result (Remix). */
+  getRecipe: async (id: number): Promise<EditRecipe> => {
+    const { data } = await api.get(`/edit/images/${id}/recipe`);
+    return data;
+  },
+
+  getMaskUrl: (id: number): string => authUrl(`/api/edit/images/${id}/mask`),
+
+  getSourceUrl: (id: number, index: number): string => authUrl(`/api/edit/images/${id}/sources/${index}`),
 
   getThumbnailUrl: (filename: string): string => {
     return authUrl(`/api/edit/thumbnails/${filename}`);
@@ -1565,17 +1613,42 @@ export const billingApi = {
     return data;
   },
 
-  createCheckout: async (packId: number, successUrl?: string, cancelUrl?: string): Promise<{ checkout_url: string; purchase_id: string }> => {
+  createCheckout: async (
+    packId: number, successUrl?: string, cancelUrl?: string, flow: 'redirect' | 'sdk' = 'redirect',
+  ): Promise<{ checkout_url: string; purchase_id: string; order_id: string | null }> => {
     const { data } = await api.post('/billing/checkout', {
       pack_id: packId,
       success_url: successUrl,
       cancel_url: cancelUrl,
+      flow,
     });
     return data;
   },
 
   getPurchases: async (skip = 0, limit = 50): Promise<PurchaseListResponse> => {
     const { data } = await api.get('/billing/purchases', { params: { skip, limit } });
+    return data;
+  },
+
+  // --- PayPal Checkout: the buyer is back from PayPal ---
+
+  capturePayPal: async (orderId: string): Promise<PayPalOutcome> => {
+    const { data } = await api.post('/billing/paypal/capture', { order_id: orderId });
+    return data;
+  },
+
+  cancelPayPal: async (orderId: string): Promise<PayPalOutcome> => {
+    const { data } = await api.post('/billing/paypal/cancel', { order_id: orderId });
+    return data;
+  },
+
+  adminPurchases: async (skip = 0, limit = 50): Promise<{ items: AdminPurchase[]; total: number }> => {
+    const { data } = await api.get('/billing/admin/purchases', { params: { skip, limit } });
+    return data;
+  },
+
+  adminRefund: async (paymentId: number): Promise<{ status: string; sparks_removed?: number }> => {
+    const { data } = await api.post(`/billing/admin/refund/${paymentId}`);
     return data;
   },
 
@@ -1672,4 +1745,16 @@ export const historyApi = {
   get: async (id: number) => (await api.get<{ history: ImageHistory | null; used_to_make: { id: number; filename: string; thumbnail_uri?: string | null }[] }>(`/images/${id}/history`)).data,
   usedBy: async (image_ids: number[], folder_id?: number) => (await api.post<{ count: number }>('/images/used-by', { image_ids, folder_id })).data,
   inputUrl: (id: number, index: number) => authUrl(`/api/images/${id}/history/inputs/${index}`),
+};
+
+// Public pages (no account needed)
+export const publicApi = {
+  getSample: async (): Promise<SampleLibrary> => {
+    const { data } = await api.get('/public/sample');
+    return data;
+  },
+  getPrices: async (): Promise<PublicPrices> => {
+    const { data } = await api.get('/public/prices');
+    return data;
+  },
 };

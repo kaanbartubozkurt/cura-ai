@@ -369,3 +369,26 @@ input[type="range"]::-moz-range-track {
   .mobile-search form > div { flex-basis: 100%; }
   .mobile-search form > button { width: 100%; }
 }
+
+:root {
+  --source-1: #2563eb;
+  --source-2: #c2410c;
+  --source-3: #15803d;
+  --source-4: #9333ea;
+  --source-5: #dc2626;
+  --source-6: #0f766e;
+}
+.dark {
+  --source-1: #60a5fa;
+  --source-2: #fb923c;
+  --source-3: #4ade80;
+  --source-4: #c084fc;
+  --source-5: #f87171;
+  --source-6: #2dd4bf;
+}
+.describe-input:empty::before,
+.describe-input[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+}

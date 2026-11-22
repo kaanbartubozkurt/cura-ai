@@ -478,14 +478,13 @@ export default function ModelsPage() {
         settings={
           <>
             <h2 className="font-medium">My models</h2>
-            <Link
-              href="/images?tool=Train%20model"
+            <button
+              onClick={() => setShowTrainModal(true)}
               className="rounded-md bg-primary px-3 py-2 text-center text-primary-foreground"
             >
-              Train from a library selection
-            </Link>
+              Train from a folder or cluster
+            </button>
             <button onClick={() => setShowUploadModal(true)} className="rounded-md border border-input px-3 py-2">Upload external LoRA</button>
-            <button onClick={() => setShowTrainModal(true)} className="text-left text-xs underline">Train from a folder or cluster</button>
             <Link href="/settings" className="text-xs underline">Model settings</Link>
             {modelsWithoutWeights.length > 0 && (
               <button

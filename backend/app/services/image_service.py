@@ -249,7 +249,7 @@ class ImageService:
             else:
                 query = query.filter(~Image.id.in_(self.db.query(folder_subq.c.image_id)))
 
-        return query.order_by(Image.created_at.desc()).offset(skip).limit(limit).all()
+        return query.order_by(Image.created_at.desc(), Image.id.desc()).offset(skip).limit(limit).all()
 
     def get_images_by_ids(self, image_ids: list[int]) -> list[Image]:
         """Get images by list of IDs."""
@@ -257,17 +257,22 @@ class ImageService:
             joinedload(Image.image_metadata)
         ).filter(Image.id.in_(image_ids), Image.user_id == self.user_id).all()
 
-    def get_images_for_clustering(self) -> list[Image]:
-        """Get all images with embeddings for clustering (includes already-clustered)."""
-        return (
+    def get_images_for_clustering(self, image_ids: list[int] | None = None) -> list[Image]:
+        """Get images with embeddings for clustering (includes already-clustered).
+
+        ``image_ids`` limits the result to those images (a folder or a selection).
+        """
+        query = (
             self.db.query(Image)
             .options(joinedload(Image.image_metadata))
             .filter(
                 Image.user_id == self.user_id,
                 Image.status.in_([ImageStatus.EMBEDDED, ImageStatus.CLUSTERED]),
             )
-            .all()
         )
+        if image_ids is not None:
+            query = query.filter(Image.id.in_(image_ids))
+        return query.all()
 
     def update_status(
         self,

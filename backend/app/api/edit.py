@@ -1,5 +1,6 @@
 """Edit API endpoints for AI-powered image editing."""
 import logging
+import re
 import uuid
 from typing import Literal
 
@@ -341,13 +342,14 @@ async def list_edit_images(
     current_user: User = Depends(get_current_user),
 ):
     """List edited images."""
-    from app.api.generation import GeneratedImageListResponse, _gen_to_response
+    from app.api.generation import GeneratedImageListResponse, _gen_to_response, _library_image_ids
 
     gen_service = get_generation_service(db, current_user.id)
     items = gen_service.get_generated_images(mode="edit", skip=skip, limit=limit)
     total = gen_service.count_generated_images(mode="edit")
+    library_ids = _library_image_ids(db, items)
     return GeneratedImageListResponse(
-        items=[_gen_to_response(g, db) for g in items],
+        items=[_gen_to_response(g, db, library_ids) for g in items],
         total=total,
         skip=skip,
         limit=limit,
@@ -392,6 +394,152 @@ async def delete_edit_image(
     gen_service = get_generation_service(db, current_user.id)
     if not await gen_service.delete_generated_image(gen_id):
         raise HTTPException(status_code=404, detail="Edited image not found")
+
+
+@router.get("/images/{gen_id}/sources/{index}")
+async def serve_edit_upload_source(
+    gen_id: int,
+    index: int,
+    resolve: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_token_param),
+):
+    """Serve an owned uploaded input when the edit has no library history copy."""
+    from app.services.storage import get_storage_service
+
+    gen = get_generation_service(db, current_user.id).get_generated_image(gen_id)
+    if not gen:
+        raise HTTPException(status_code=404, detail="Edited image not found")
+    sources = (gen.generation_params or {}).get("sources", {}).get("ordered", [])
+    if index < 0 or index >= len(sources):
+        raise HTTPException(status_code=404, detail="Source not found")
+    source = sources[index]
+    key = source.get("key", "")
+    match = re.fullmatch(rf"edit-sources/{current_user.id}-[a-f0-9]{{32}}\.(jpg|png|webp|gif)", key)
+    if source.get("type") != "upload" or not match:
+        raise HTTPException(status_code=404, detail="Source not found")
+    extension = match.group(1)
+    mime_type = "image/jpeg" if extension == "jpg" else f"image/{extension}"
+    response = get_storage_service().get_file_response("generated", key, mime_type, resolve=resolve)
+    if response is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    return response
+
+
+RECIPE_SETTINGS = (
+    "image_size", "resolution", "aspect_ratio", "quality", "safety_tolerance",
+    "enable_web_search", "enable_prompt_expansion", "enable_safety_checker", "series_amount", "result_type",
+)
+
+
+def _recipe_sources(refs: dict) -> list[dict]:
+    """Sources in the order they were sent, including edits saved before `ordered` existed."""
+    if refs.get("ordered"):
+        return [dict(source) for source in refs["ordered"]]
+    names = refs.get("upload_names") or {}
+    return (
+        [{"type": "gallery", "id": i} for i in refs.get("image_ids") or []]
+        + [{"type": "generated", "id": i} for i in refs.get("generated_ids") or []]
+        + [{"type": "upload", "key": k, "name": names.get(k)} for k in refs.get("upload_keys") or []]
+    )
+
+
+def _recipe_job(params: dict, sources: list[dict]) -> str:
+    if params.get("mask_key"):
+        return "paint"
+    if params.get("object_boxes") is not None:
+        return "objects"
+    if params.get("result_type") or any(s.get("role") or s.get("element") for s in sources):
+        return "subject"
+    return "describe"
+
+
+@router.get("/images/{gen_id}/recipe")
+async def get_edit_recipe(
+    gen_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Everything needed to reopen Edit exactly as it was for this result (Remix).
+
+    Sources keep their original order and roles. Library or generated sources that
+    were deleted since are returned with `available: false` so the page can say so.
+    The seed is not reused by default; `original_seed` lets the user opt in.
+    """
+    from app.models.generated_image import GeneratedImage
+    from app.models.image import Image
+
+    gen = get_generation_service(db, current_user.id).get_generated_image(gen_id)
+    params = (gen.generation_params or {}) if gen else {}
+    if not gen or params.get("mode") != "edit":
+        raise HTTPException(status_code=404, detail="Edited image not found")
+
+    sources = []
+    for index, source in enumerate(_recipe_sources(params.get("sources") or {})):
+        item = {**source, "index": index, "available": True}
+        if source.get("type") == "gallery":
+            image = db.query(Image).filter(Image.id == source.get("id"), Image.user_id == current_user.id).first()
+            if image:
+                item.update(
+                    object_key=image.object_key, width=image.width, height=image.height,
+                    thumbnail_uri_medium=image.thumbnail_uri_medium or image.thumbnail_uri_small,
+                    thumbnail_uri_large=image.thumbnail_uri_large,
+                )
+            else:
+                item["available"] = False
+        elif source.get("type") == "generated":
+            source_gen = (
+                db.query(GeneratedImage)
+                .filter(GeneratedImage.id == source.get("id"), GeneratedImage.user_id == current_user.id)
+                .first()
+            )
+            if source_gen and source_gen.object_key:
+                item.update(width=source_gen.width, height=source_gen.height)
+            else:
+                item["available"] = False
+        sources.append(item)
+
+    num_images = 1
+    if gen.job_id:
+        job = db.query(Job).filter(Job.id == gen.job_id, Job.user_id == current_user.id).first()
+        num_images = int(((job.parameters or {}) if job else {}).get("num_images") or 1)
+
+    return {
+        "id": gen.id,
+        "job": _recipe_job(params, sources),
+        "edit_model": params.get("edit_model") or gen.base_model,
+        "prompt": gen.prompt or "",
+        "negative_prompt": gen.negative_prompt or "",
+        "num_images": num_images,
+        "settings": {key: params[key] for key in RECIPE_SETTINGS if params.get(key) is not None},
+        "original_seed": params.get("actual_seed", params.get("seed")),
+        "has_mask": bool(params.get("mask_key")),
+        "object_boxes": params.get("object_boxes"),
+        "precision_area": params.get("precision_area"),
+        "precision_box": params.get("precision_box"),
+        "sources": sources,
+        "missing_sources": sum(1 for s in sources if not s["available"]),
+    }
+
+
+@router.get("/images/{gen_id}/mask")
+async def serve_edit_mask(
+    gen_id: int,
+    resolve: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_token_param),
+):
+    """Serve the painted mask an edit used (white = edited), for Remix."""
+    from app.services.storage import get_storage_service
+
+    gen = get_generation_service(db, current_user.id).get_generated_image(gen_id)
+    key = ((gen.generation_params or {}) if gen else {}).get("mask_key", "")
+    if not re.fullmatch(rf"edit-sources/{current_user.id}-[a-f0-9]{{32}}\.png", key or ""):
+        raise HTTPException(status_code=404, detail="Mask not found")
+    response = get_storage_service().get_file_response("generated", key, "image/png", resolve=resolve)
+    if response is None:
+        raise HTTPException(status_code=404, detail="Mask not found")
+    return response
 
 
 @router.get("/images/{gen_id}/file")

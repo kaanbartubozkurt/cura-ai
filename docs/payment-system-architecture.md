@@ -1,5 +1,7 @@
 # SightLab Payment System Architecture
 
+> **Note (2026-11-18):** payments now go through PayPal Checkout (#167), not Lemon Squeezy. This review is kept as written; see CLAUDE.md ("PayPal Checkout") for how it works today.
+
 > Technical report for integrating real-money payments into SightLab's sparks billing system.
 > Created: 2026-03-04 | Revised: 2026-03-04 (Phases 5-11 roadmap added)
 

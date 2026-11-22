@@ -1,5 +1,6 @@
 """Generation API endpoints for LoRA training, image generation, and evaluation."""
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, model_validator
@@ -215,6 +216,9 @@ class GeneratedImageResponse(BaseModel):
     thumbnail_uri_small: str | None
     thumbnail_uri_medium: str | None
     job_id: int | None
+    library_image_id: int | None = None
+    library_thumbnail_uri_medium: str | None = None
+    library_thumbnail_uri_large: str | None = None
     cost_sparks: float | None = None
     created_at: str
     completed_at: str | None
@@ -327,7 +331,20 @@ def _lora_to_response(lora, db: Session) -> LoraModelResponse:
     )
 
 
-def _gen_to_response(gen, db: Session) -> GeneratedImageResponse:
+def _library_image_ids(db: Session, gens) -> dict[int, tuple[int, str | None, str | None]]:
+    """Map generation ids to owned library ids and previews, in one query."""
+    from app.models.image import Image
+
+    if not gens:
+        return {}
+    rows = db.query(Image.generated_image_id, Image.id, Image.thumbnail_uri_medium, Image.thumbnail_uri_large).filter(
+        Image.generated_image_id.in_([g.id for g in gens]),
+        Image.user_id == gens[0].user_id,
+    ).all()
+    return {gen_id: (image_id, medium, large) for gen_id, image_id, medium, large in rows}
+
+
+def _gen_to_response(gen, db: Session, library_ids: dict[int, tuple[int, str | None, str | None]] | None = None) -> GeneratedImageResponse:
     from app.models.lora_model import LoraModel
 
     # Build loras list from generation_params if available
@@ -358,7 +375,13 @@ def _gen_to_response(gen, db: Session) -> GeneratedImageResponse:
             elif job.charged_cost is not None:
                 cost_sparks = round(float(job.charged_cost) / total_items, 1)
 
+    if library_ids is None:
+        library_ids = _library_image_ids(db, [gen])
+    library = library_ids.get(gen.id, (None, None, None))
     return GeneratedImageResponse(
+        library_image_id=library[0],
+        library_thumbnail_uri_medium=library[1],
+        library_thumbnail_uri_large=library[2],
         id=gen.id,
         prompt=gen.prompt,
         negative_prompt=gen.negative_prompt,
@@ -1152,6 +1175,7 @@ async def generate_images(request: GenerateRequest, db: Session = Depends(get_db
 async def list_generated_images(
     lora_model_id: int | None = None,
     status: str | None = None,
+    mode: Literal["generate", "edit"] = "generate",
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -1165,15 +1189,16 @@ async def list_generated_images(
         status=status_filter,
         skip=skip,
         limit=limit,
-        mode="generate",
+        mode=mode,
     )
     total = gen_service.count_generated_images(
         lora_model_id=lora_model_id,
         status=status_filter,
-        mode="generate",
+        mode=mode,
     )
+    library_ids = _library_image_ids(db, items)
     return GeneratedImageListResponse(
-        items=[_gen_to_response(g, db) for g in items],
+        items=[_gen_to_response(g, db, library_ids) for g in items],
         total=total,
         skip=skip,
         limit=limit,

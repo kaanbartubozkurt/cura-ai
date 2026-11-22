@@ -49,6 +49,37 @@ async def lemon_squeezy_webhook(
         db.close()
 
 
+# PayPal posts to /api/webhooks/paypal (the address set in the PayPal app).
+paypal_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+
+@paypal_router.post("/paypal")
+async def paypal_webhook(request: Request):
+    """PayPal notifications (#167). No auth: each one is verified with PayPal before use.
+
+    Answers 400 for notifications that fail verification, and 500 when
+    processing fails so PayPal retries later.
+    """
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty request body")
+
+    from app.db.base import SessionLocal
+    from app.services.payment_service import PaymentService
+
+    db = SessionLocal()
+    try:
+        return await PaymentService(db).handle_paypal_webhook(body, request.headers)
+    except ValueError as e:
+        logger.warning("PayPal webhook rejected: %s", e)
+        raise HTTPException(status_code=400, detail="Rejected")
+    except Exception:
+        logger.exception("PayPal webhook processing failed")
+        raise HTTPException(status_code=500, detail="Webhook processing failed")
+    finally:
+        db.close()
+
+
 class TestWebhookRequest(BaseModel):
     event: str  # order_created, subscription_created, etc.
     purchase_id: str | None = None  # Required for order_created

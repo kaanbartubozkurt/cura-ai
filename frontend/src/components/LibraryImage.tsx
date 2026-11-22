@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ImgHTMLAttributes } from 'react';
+import { startImageTiming } from '@/lib/loadTimings';
 import { resolveImageUrl } from '@/lib/api';
 
 // JWT rotation must not change the identity of an already loaded image.
@@ -21,15 +22,26 @@ function imageKey(src: string) {
   return url.toString();
 }
 
-function ImageContent({ src, initialSource, loading, ...props }: ImgHTMLAttributes<HTMLImageElement> & { src: string; initialSource: string }) {
+export function resolveLibraryImageUrl(src: string) {
+  return resolveImageUrl(imageKey(src));
+}
+
+function ImageContent({ src, initialSource, resolvedSource, loading, ...props }: ImgHTMLAttributes<HTMLImageElement> & { src: string; initialSource: string; resolvedSource?: string }) {
   const host = useRef<HTMLImageElement>(null);
   const [visible, setVisible] = useState(loading !== 'lazy');
   const [url, setUrl] = useState<string | undefined>(() => {
+    if (resolvedSource) return resolvedSource;
     const candidate = new URL(initialSource, typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
     const expiry = candidate.searchParams.get('se');
     return candidate.hostname.endsWith('.blob.core.windows.net') && expiry && Date.parse(expiry) > Date.now() + 60_000
       ? initialSource : undefined;
   });
+  const finishTiming = useRef<() => void>(() => {});
+  const timedUrl = useRef<string | undefined>(undefined);
+  if (timedUrl.current !== url) {
+    timedUrl.current = url;
+    finishTiming.current = url ? startImageTiming(src) : () => {};
+  }
   const hasInitialUrl = useRef(!!url);
   const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
@@ -80,6 +92,7 @@ function ImageContent({ src, initialSource, loading, ...props }: ImgHTMLAttribut
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img {...props} ref={host} alt={props.alt || ''} src={url} loading={loading} onLoad={(event) => {
+          finishTiming.current();
           setLoaded(true);
           props.onLoad?.(event);
         }} onError={(event) => {
@@ -94,7 +107,7 @@ function ImageContent({ src, initialSource, loading, ...props }: ImgHTMLAttribut
   );
 }
 
-export default function LibraryImage(props: ImgHTMLAttributes<HTMLImageElement>) {
+export default function LibraryImage(props: ImgHTMLAttributes<HTMLImageElement> & { resolvedSource?: string }) {
   if (!props.src) return null;
   const key = imageKey(props.src);
   return <ImageContent {...props} src={key} initialSource={props.src} key={key} />;

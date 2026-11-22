@@ -27,6 +27,7 @@ from app.providers.base import (
     VisionEvalResult,
 )
 from app.providers.fal_provider import _ensure_fal_key
+from app.providers.log_safety import for_log  # noqa: E402
 from app.providers.prompts import (
     ASSESSMENT_SUMMARY_PROMPT,
     CLUSTER_SUMMARY_PROMPT,
@@ -98,7 +99,7 @@ def _fal_submit_and_poll(endpoint: str, arguments: dict, poll_interval: float = 
     """Submit a fal.ai request and poll for completion at a sane interval."""
     from fal_client.client import Completed
 
-    logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, _sanitize_for_log(arguments))
+    logger.info("FAL REQUEST | endpoint=%s args=%s", endpoint, for_log(_sanitize_for_log(arguments)))
     handle = fal_client.submit(endpoint, arguments=arguments)
     while True:
         status = handle.status(with_logs=False)
@@ -106,7 +107,7 @@ def _fal_submit_and_poll(endpoint: str, arguments: dict, poll_interval: float = 
             break
         time.sleep(poll_interval)
     result = handle.get()
-    logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, handle.request_id, result)
+    logger.info("FAL RESPONSE | endpoint=%s request_id=%s result=%s", endpoint, handle.request_id, for_log(result))
     return result
 
 
@@ -119,6 +120,24 @@ def _extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
     return {}
+
+
+STOPPED_EARLY = (
+    "The model stopped before finishing its answer, which usually means its safety filter "
+    "blocked the image. Try another model."
+)
+
+
+def _cut_off_json(content: str, parsed: dict, key: str) -> bool:
+    """True when the model started a JSON answer but never finished it.
+
+    Some models (e.g. Gemini) stop mid-answer when their safety filter trips and fal
+    reports zero usage. Saving that half sentence as a description would be wrong.
+    """
+    if parsed.get(key) or parsed.get("error"):
+        return False
+    start = content.strip().removeprefix("```json").removeprefix("```").lstrip()
+    return start.startswith("{")
 
 
 def _to_data_uri(image_data: bytes, mime_type: str) -> str:
@@ -194,6 +213,8 @@ class FalVisionTagger(BaseTagger):
         parsed = _extract_json(content)
 
         # Check for AI-reported error
+        if _cut_off_json(content, parsed, "tags"):
+            parsed = {"error": STOPPED_EARLY}
         if "error" in parsed and not parsed.get("tags"):
             error = AIContentError(parsed["error"], operation="tag")
             write_log(
@@ -295,6 +316,8 @@ class FalVisionDescriber(BaseDescriber):
         parsed = _extract_json(content)
 
         # Check for AI-reported error
+        if _cut_off_json(content, parsed, "description"):
+            parsed = {"error": STOPPED_EARLY}
         if "error" in parsed and not parsed.get("description"):
             error = AIContentError(parsed["error"], operation="describe")
             write_log(

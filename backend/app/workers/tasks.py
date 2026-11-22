@@ -1,5 +1,6 @@
 """Celery tasks for the image processing pipeline."""
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -29,7 +30,7 @@ from app.services.billing_service import (
     ZeroCostEstimateError,
     finalize_job_billing,
 )
-from app.services.cluster_service import get_cluster_service
+from app.services.cluster_service import SCOPED_RUN_PREFIX, get_cluster_service
 from app.services.clustering import get_clustering_service
 from app.services.image_service import get_image_service
 from app.services.log_service import write_log
@@ -127,6 +128,17 @@ def _update_job_status(db: Session, job_id: int | None, status: JobStatus, **kwa
     for key, value in kwargs.items():
         setattr(job, key, value)
     db.commit()
+    if status in (JobStatus.COMPLETED, JobStatus.FAILED) and (job.parameters or {}).get("parent_job_id"):
+        # Batch children report back so the batch's progress and completion never
+        # depend on a poller that a worker restart could kill (#143).
+        try:
+            from app.services.job_recovery import advance_batch_parent
+
+            advance_batch_parent(db, job)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning(f"Could not update the batch of job {job_id}", exc_info=True)
 
 
 def _assign_folder_on_completion(db: Session, job: Job):
@@ -297,6 +309,10 @@ def process_ingest(self, image_id: int, user_id: int, job_id: int | None = None,
         if not image:
             logger.error(f"Image {image_id} not found")
             return {"status": "error", "message": "Image not found"}
+        # Re-delivery guard (as in process_ingest_batch): already ingested images are skipped.
+        if image.status != ImageStatus.PENDING:
+            logger.info(f"Image {image_id} already {image.status}; skipping ingest")
+            return {"status": "skipped", "image_id": image_id}
 
         # Read file back from storage
         file_data = run_async(storage.get_image(image.object_key))
@@ -850,9 +866,22 @@ def tag_and_describe_image(
 
 
 @celery_app.task(bind=True)
-def cluster_all_images(self, user_id: int, job_id: int | None = None, trace_id: str | None = None, session_id: str | None = None) -> dict:
+def cluster_all_images(
+    self,
+    user_id: int,
+    job_id: int | None = None,
+    trace_id: str | None = None,
+    session_id: str | None = None,
+    image_ids: list[int] | None = None,
+    params: dict | None = None,
+) -> dict:
     """
-    Cluster all embedded images.
+    Cluster embedded images.
+
+    Without ``image_ids`` the whole library is clustered and the previous
+    whole-library run is replaced. With ``image_ids`` (a folder or a selection)
+    only those images are clustered and the new clusters are added next to the
+    existing ones. ``params`` overrides the saved clustering config for this run.
 
     Pipeline stage: 6
     """
@@ -874,8 +903,9 @@ def cluster_all_images(self, user_id: int, job_id: int | None = None, trace_id: 
         cluster_service = get_cluster_service(db, user_id)
         clustering_service = get_clustering_service()
 
-        # Get all embedded images
-        images = image_service.get_images_for_clustering()
+        scoped = image_ids is not None
+        # Get embedded images (optionally limited to the requested scope)
+        images = image_service.get_images_for_clustering(image_ids=image_ids)
 
         if len(images) < 2:
             logger.warning("Not enough images for clustering")
@@ -900,16 +930,22 @@ def cluster_all_images(self, user_id: int, job_id: int | None = None, trace_id: 
         # Read clustering config from DB
         settings_service = get_settings_service(db, user_id)
         clustering_config = settings_service.get_clustering_config()
+        if params:
+            clustering_config = {**clustering_config, **params}
 
         # Run clustering
         result = clustering_service.cluster(embeddings_array, params=clustering_config)
 
-        # Delete old clusters (keep only latest run)
-        cluster_service.delete_old_clusters()
+        if scoped:
+            # Folder/selection runs add clusters; nothing existing is removed.
+            result.run_id = f"{SCOPED_RUN_PREFIX}{result.run_id}"
+        else:
+            # A whole-library run replaces the previous whole-library run only.
+            cluster_service.delete_old_clusters(library_only=True)
 
         # Create new clusters
         clusters = cluster_service.create_clusters_from_result(
-            result, image_ids, embeddings_array
+            result, image_ids, embeddings_array, include_noise=not scoped
         )
 
         # Generate cover composites for each cluster
@@ -930,9 +966,10 @@ def cluster_all_images(self, user_id: int, job_id: int | None = None, trace_id: 
                 job.status = JobStatus.COMPLETED
                 job.completed_at = datetime.utcnow()
                 job.result = {
-                    "n_clusters": result.n_clusters,
+                    "n_clusters": len(clusters),
                     "n_images": len(image_ids),
                     "run_id": result.run_id,
+                    "scoped": scoped,
                 }
                 db.commit()
 
@@ -1415,7 +1452,7 @@ def run_full_pipeline(self, job_id: int, user_id: int, trace_id: str | None = No
 
 
 @celery_app.task(bind=True, queue='clustering', acks_late=False, max_retries=0, reject_on_worker_lost=False)
-def run_batch_reprocess(self, job_id: int, user_id: int, image_ids: list[int], trace_id: str | None = None, session_id: str | None = None) -> dict:
+def run_batch_reprocess(self, job_id: int, user_id: int, image_ids: list[int], trace_id: str | None = None, session_id: str | None = None, model: str | None = None) -> dict:
     """
     Reprocess a batch of images: reset each to INGESTED, dispatch process_image_pipeline,
     then poll until all images have finished processing.
@@ -1460,7 +1497,8 @@ def run_batch_reprocess(self, job_id: int, user_id: int, image_ids: list[int], t
             for image_id in image_ids:
                 try:
                     image_service.update_status(image_id, ImageStatus.INGESTED)
-                    _dispatch_pipeline_child(db, job, image_id, user_id)
+                    # model: vision model chosen for this batch (None = the user's default).
+                    _dispatch_pipeline_child(db, job, image_id, user_id, model=model)
                     queued += 1
                 except Exception as e:
                     logger.error(f"Failed to queue reprocess for image {image_id}: {_unwrap_error(e)}")
@@ -1471,69 +1509,21 @@ def run_batch_reprocess(self, job_id: int, user_id: int, image_ids: list[int], t
                 job.result = {"image_ids": image_ids, "dispatched": True, "queued": queued}
                 db.commit()
 
-        # Phase 2: Poll until all images have finished (no longer INGESTED)
-        image_id_set = set(image_ids)
-        poll_interval = 5  # seconds
-        while True:
-            # Re-check if job was cancelled during polling
-            db.expire_all()
-            job = db.query(Job).filter(Job.id == job_id).first()
-            if job and job.status in (JobStatus.CANCELLED, JobStatus.FAILED):
-                logger.info(f"Batch reprocess job {job_id} cancelled during polling")
-                return {"status": "cancelled", "total": len(image_ids)}
+        # Phase 2: each child reports its own completion (advance_batch_parent in
+        # _update_job_status), so no poller has to survive worker restarts (#143).
+        # Reconcile once now in case every child has already finished.
+        from app.services.job_recovery import reconcile_batch
 
-            done_count = (
-                db.query(Image)
-                .filter(
-                    Image.id.in_(image_id_set),
-                    Image.status != ImageStatus.INGESTED,
-                )
-                .count()
-            )
-
-            if job:
-                job.progress = done_count
-                db.commit()
-
-            if done_count >= len(image_ids):
-                break
-
-            time.sleep(poll_interval)
-
-        # Count outcomes
-        failed_count = (
-            db.query(Image)
-            .filter(Image.id.in_(image_id_set), Image.status == ImageStatus.FAILED)
-            .count()
-        )
-        succeeded = len(image_ids) - failed_count
-
-        job = db.query(Job).filter(Job.id == job_id).first()
-        if job:
-            job.completed_at = datetime.utcnow()
-            job.result = {
-                "total": len(image_ids),
-                "queued": queued,
-                "succeeded": succeeded,
-                "failed": failed_count,
-                "image_ids": image_ids,
-                "dispatched": True,
-            }
-            if failed_count >= len(image_ids):
-                job.status = JobStatus.FAILED
-                job.error_message = f"All {failed_count} images failed"
-            elif failed_count > 0:
-                job.status = JobStatus.COMPLETED
-                job.error_message = f"{failed_count}/{len(image_ids)} images failed"
-            else:
-                job.status = JobStatus.COMPLETED
-            db.commit()
+        # of=Job: Job eager-joins its image, and FOR UPDATE can't lock an outer join's nullable side.
+        job = db.query(Job).filter(Job.id == job_id).with_for_update(of=Job).populate_existing().first()
+        finished = bool(job) and reconcile_batch(db, job)
+        db.commit()
 
         elapsed = (time.monotonic() - task_start) * 1000
         write_log(category=LogCategory.TASK,
-                  message=f"Task run_batch_reprocess completed in {elapsed:.0f}ms ({succeeded} succeeded, {failed_count} failed)",
+                  message=f"Task run_batch_reprocess dispatched {queued} images in {elapsed:.0f}ms",
                   task_name="run_batch_reprocess", job_id=job_id, duration_ms=round(elapsed, 1), user_id=user_id)
-        return {"status": "success", "total": len(image_ids), "succeeded": succeeded, "failed": failed_count}
+        return {"status": "dispatched", "total": len(image_ids), "queued": queued, "finished": finished}
 
     except Exception as e:
         # A failed SQL transaction must be rolled back before recording failure.
@@ -1616,68 +1606,21 @@ def run_batch_describe(
                 job.result = {"image_ids": image_ids, "dispatched": True, "queued": queued}
                 db.commit()
 
-        # Phase 2: Poll until all images have finished
-        image_id_set = set(image_ids)
-        poll_interval = 5
-        while True:
-            db.expire_all()
-            job = db.query(Job).filter(Job.id == job_id).first()
-            if job and job.status in (JobStatus.CANCELLED, JobStatus.FAILED):
-                logger.info(f"Batch describe job {job_id} cancelled during polling")
-                return {"status": "cancelled", "total": len(image_ids)}
+        # Phase 2: each child reports its own completion (advance_batch_parent in
+        # _update_job_status), so no poller has to survive worker restarts (#143).
+        # Reconcile once now in case every child has already finished.
+        from app.services.job_recovery import reconcile_batch
 
-            done_count = (
-                db.query(Image)
-                .filter(
-                    Image.id.in_(image_id_set),
-                    Image.status != ImageStatus.INGESTED,
-                )
-                .count()
-            )
-
-            if job:
-                job.progress = done_count
-                db.commit()
-
-            if done_count >= len(image_ids):
-                break
-
-            time.sleep(poll_interval)
-
-        # Count outcomes
-        failed_count = (
-            db.query(Image)
-            .filter(Image.id.in_(image_id_set), Image.status == ImageStatus.FAILED)
-            .count()
-        )
-        succeeded = len(image_ids) - failed_count
-
-        job = db.query(Job).filter(Job.id == job_id).first()
-        if job:
-            job.completed_at = datetime.utcnow()
-            job.result = {
-                "total": len(image_ids),
-                "queued": queued,
-                "succeeded": succeeded,
-                "failed": failed_count,
-                "image_ids": image_ids,
-                "dispatched": True,
-            }
-            if failed_count >= len(image_ids):
-                job.status = JobStatus.FAILED
-                job.error_message = f"All {failed_count} images failed"
-            elif failed_count > 0:
-                job.status = JobStatus.COMPLETED
-                job.error_message = f"{failed_count}/{len(image_ids)} images failed"
-            else:
-                job.status = JobStatus.COMPLETED
-            db.commit()
+        # of=Job: Job eager-joins its image, and FOR UPDATE can't lock an outer join's nullable side.
+        job = db.query(Job).filter(Job.id == job_id).with_for_update(of=Job).populate_existing().first()
+        finished = bool(job) and reconcile_batch(db, job)
+        db.commit()
 
         elapsed = (time.monotonic() - task_start) * 1000
         write_log(category=LogCategory.TASK,
-                  message=f"Task run_batch_describe completed in {elapsed:.0f}ms ({succeeded} succeeded, {failed_count} failed)",
+                  message=f"Task run_batch_describe dispatched {queued} images in {elapsed:.0f}ms",
                   task_name="run_batch_describe", job_id=job_id, duration_ms=round(elapsed, 1), user_id=user_id)
-        return {"status": "success", "total": len(image_ids), "succeeded": succeeded, "failed": failed_count}
+        return {"status": "dispatched", "total": len(image_ids), "queued": queued, "finished": finished}
 
     except Exception as e:
         # A failed SQL transaction must be rolled back before recording failure.
@@ -2263,6 +2206,8 @@ def _create_reconciliation_anomaly(
     detail["decision_id"] = decision.id
     if decision.trace_id:
         detail["trace_id"] = decision.trace_id
+    # JSON-safe: details carry Decimal sparks, which the JSON column can't store.
+    detail = json.loads(json.dumps(detail, default=str))
     anomaly = BillingAnomaly(
         user_id=decision.user_id,
         anomaly_type=anomaly_type,
